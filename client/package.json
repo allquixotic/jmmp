@@ -1,0 +1,42 @@
+{
+  "name": "@jmmp/client",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "quasar dev -m pwa",
+    "build": "quasar build -m pwa",
+    "lint": "quasar build -m pwa",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@jmmp/shared": "workspace:*",
+    "@quasar/extras": "^1.16.12",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@wasm-audio-decoders/flac": "^0.2.10",
+    "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
+    "mpg123-decoder": "^1.0.3",
+    "ogg-opus-decoder": "^1.7.3",
+    "pinia": "^2.2.0",
+    "quasar": "2.19.3",
+    "register-service-worker": "^1.7.2",
+    "soundtouchjs": "^0.3.0",
+    "vue": "^3.5.0",
+    "vue-router": "^4.4.0"
+  },
+  "devDependencies": {
+    "@quasar/app-vite": "^2.6.0",
+    "@types/node": "^25.9.1",
+    "@vue/tsconfig": "^0.7.0",
+    "autoprefixer": "^10.4.20",
+    "vue-tsc": "^2.1.10",
+    "workbox-build": "^7.0.0",
+    "workbox-cacheable-response": "^7.0.0",
+    "workbox-core": "^7.0.0",
+    "workbox-expiration": "^7.0.0",
+    "workbox-precaching": "^7.0.0",
+    "workbox-routing": "^7.0.0",
+    "workbox-strategies": "^7.0.0"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "jmmp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Just My Music Player",
+  "license": "Apache-2.0",
+  "author": "Sean McNamara",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/allquixotic/jmmp.git"
+  },
+  "homepage": "https://github.com/allquixotic/jmmp#readme",
+  "workspaces": ["shared", "server", "client"],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green 'bun --cwd=server run dev' 'bun --cwd=client run dev'",
+    "test": "bun --cwd=server run test && bun --cwd=client run test",
+    "build": "bun --cwd=client run build && bun build/embed-client.ts && bun --cwd=server run build",
+    "e2e": "playwright test -c e2e/playwright.config.ts"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0",
+    "@playwright/test": "^1.50.0"
+  }
+}

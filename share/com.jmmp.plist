@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright 2026 Sean McNamara
+  SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jmmp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/jmmp-macos-arm64</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JMMP_CONFIG</key>
+    <string>/Users/Shared/jmmp/jmmp.yml</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/Shared/jmmp/jmmp.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/Shared/jmmp/jmmp.log</string>
+</dict>
+</plist>

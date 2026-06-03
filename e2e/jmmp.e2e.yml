@@ -1,0 +1,19 @@
+# Copyright 2026 Sean McNamara
+# SPDX-License-Identifier: Apache-2.0
+
+listen:
+  host: 127.0.0.1
+  port: 3000
+
+sessionTtlDays: 30
+jwtSecret: e2e-test-secret-which-is-long-enough-for-hs256
+
+webauthn:
+  rpId: localhost
+  rpName: jmmp e2e
+  origin:
+    - http://localhost:9001
+
+tailscaleAuto: false
+dataDir: e2e/.e2e-data
+logLevel: info

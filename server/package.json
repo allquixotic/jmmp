@@ -1,0 +1,26 @@
+{
+  "name": "@jmmp/server",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "jmmp": "./src/main.ts"
+  },
+  "scripts": {
+    "dev": "bun run --watch src/main.ts",
+    "start": "bun run src/main.ts",
+    "init": "bun run src/main.ts init",
+    "wipe-passkeys": "bun run src/main.ts wipe-passkeys",
+    "test": "bun test",
+    "build": "bun build --target=bun --outdir=dist src/main.ts"
+  },
+  "dependencies": {
+    "@jmmp/shared": "workspace:*",
+    "@simplewebauthn/server": "^13.3.0",
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0"
+  }
+}

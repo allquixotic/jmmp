@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+
+# Build output and generated framework files
+dist/
+server/dist/
+client/dist/
+client/.quasar/
+*.tsbuildinfo
+coverage/
+
+# Local config, secrets, and runtime state
+.env
+.env.*
+!.env.example
+jmmp.yml
+jmmp.local.yml
+data/
+logs/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.machine_key
+
+# Tests and reports
+playwright-report/
+test-results/
+e2e/.e2e-data/
+
+# Package-manager caches and alternate locks
+bun.lockb
+.bun/
+.yarn/
+.npm/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Machine-local agent notes
+AGENTS.md
+CLAUDE.md

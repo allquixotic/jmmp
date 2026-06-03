@@ -1,0 +1,22 @@
+/*
+ * Copyright 2026 Sean McNamara
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+// jmmp global styles
+
+:root {
+  color-scheme: dark light;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+.q-page {
+  padding: 16px;
+}
+
+.mono {
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}

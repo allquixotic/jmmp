@@ -1,0 +1,22 @@
+# Copyright 2026 Sean McNamara
+# SPDX-License-Identifier: Apache-2.0
+
+[Unit]
+Description=jmmp — Just My Music Player
+After=network.target
+
+[Service]
+Type=simple
+User=jmmp
+Group=jmmp
+ExecStart=/usr/local/bin/jmmp-linux-amd64
+Environment=JMMP_CONFIG=/etc/jmmp/jmmp.yml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

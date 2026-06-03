@@ -1,0 +1,25 @@
+# Copyright 2026 Sean McNamara
+# SPDX-License-Identifier: Apache-2.0
+
+listen:
+  host: 127.0.0.1
+  port: 3000
+
+sessionTtlDays: 30
+
+# Generate with: openssl rand -base64 48
+jwtSecret: REPLACE_ME_WITH_RANDOM_BYTES
+
+webauthn:
+  # rpId must match the URL host (no port, no path).
+  rpId: jmmp.example.com
+  rpName: jmmp
+  # origin is the full URL prefix passed to WebAuthn during verification.
+  # Provide a list of every host the app is served from.
+  origin:
+    - https://jmmp.example.com
+
+# Where sqlite, machine key, and any cached art live.
+dataDir: /var/lib/jmmp
+
+logLevel: info

@@ -1,0 +1,28 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["quasar", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "src/*": ["src/*"],
+      "@jmmp/shared": ["../shared/src/index.ts"],
+      "@jmmp/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "src-pwa/**/*.ts",
+    "quasar.config.ts"
+  ]
+}
