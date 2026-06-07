@@ -5,10 +5,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import type { Track } from "@jmmp/shared";
 import {
+  installPlaybackWakeLockForTest,
   installPlayerBackendForTest,
   usePlayerStore,
 } from "../stores/player";
 import { useSourcesStore } from "../stores/sources";
+import type { PlayerState } from "../audio/pipeline";
 
 class FakePlayerBackend extends EventTarget {
   playCalls: Array<{ track: Track; options: unknown }> = [];
@@ -26,13 +28,28 @@ class FakePlayerBackend extends EventTarget {
     this.params.push(params);
   }
   setVolume(): void {}
+
+  emitState(state: PlayerState): void {
+    this.dispatchEvent(new CustomEvent("state", { detail: state }));
+  }
+}
+
+class FakeWakeLockController {
+  activeStates: boolean[] = [];
+
+  setActive(active: boolean): void {
+    this.activeStates.push(active);
+  }
 }
 
 let restorePlayer: (() => void) | null = null;
+let restoreWakeLock: (() => void) | null = null;
 
 afterEach(() => {
   restorePlayer?.();
   restorePlayer = null;
+  restoreWakeLock?.();
+  restoreWakeLock = null;
 });
 
 describe("player store", () => {
@@ -72,6 +89,24 @@ describe("player store", () => {
     expect(player.position).toBe(0);
     expect(player.duration).toBe(120);
     expect(fake.playCalls[0]?.track.id).toBe(track.id);
+  });
+
+  test("holds the playback wake lock only while playing", () => {
+    setActivePinia(createPinia());
+    const fake = new FakePlayerBackend();
+    const wakeLock = new FakeWakeLockController();
+    restorePlayer = installPlayerBackendForTest(fake);
+    restoreWakeLock = installPlaybackWakeLockForTest(wakeLock);
+
+    usePlayerStore().ensure();
+    fake.emitState("loading");
+    fake.emitState("playing");
+    fake.emitState("paused");
+    fake.emitState("playing");
+    fake.emitState("ended");
+    fake.emitState("error");
+
+    expect(wakeLock.activeStates).toEqual([false, true, false, true, false, false]);
   });
 });
 

@@ -12,6 +12,10 @@ import { useSourcesStore } from "./sources";
 import { getCacheEntry, pin as pinCachedTrack } from "src/storage/opfs-cache";
 import type { CachePolicy } from "@jmmp/shared";
 import { useSessionStore } from "./session";
+import {
+  createPlaybackWakeLock,
+  type PlaybackWakeLockController,
+} from "src/audio/wake-lock";
 
 interface PlayerBackend extends EventTarget {
   play(track: Track, cacheOptions?: Parameters<AudioPlayer["play"]>[1]): Promise<void>;
@@ -25,6 +29,9 @@ interface PlayerBackend extends EventTarget {
 
 let player: PlayerBackend | null = null;
 let createPlayerBackend = (): PlayerBackend => new AudioPlayer();
+let playbackWakeLock: PlaybackWakeLockController | null | undefined;
+let createPlaybackWakeLockController = (): PlaybackWakeLockController | null =>
+  createPlaybackWakeLock();
 
 interface State {
   state: PlayerState;
@@ -56,6 +63,7 @@ export const usePlayerStore = defineStore("player", {
       player = createPlayerBackend();
       player.addEventListener("state", (e) => {
         this.state = (e as CustomEvent).detail;
+        setPlaybackWakeLockActive(this.state === "playing");
         this.error = this.state === "error" ? this.error : null;
         if (this.state === "ended") void this.onEnded();
       });
@@ -92,9 +100,11 @@ export const usePlayerStore = defineStore("player", {
     },
     pause(): void {
       this.ensure().pause();
+      setPlaybackWakeLockActive(false);
     },
     resume(): void {
       this.ensure().resume();
+      setPlaybackWakeLockActive(true);
     },
     toggle(): void {
       if (this.state === "playing") this.pause();
@@ -102,6 +112,7 @@ export const usePlayerStore = defineStore("player", {
     },
     stop(): void {
       this.ensure().stop();
+      setPlaybackWakeLockActive(false);
       this.current = null;
       this.position = 0;
     },
@@ -179,13 +190,33 @@ export const usePlayerStore = defineStore("player", {
   },
 });
 
+function setPlaybackWakeLockActive(active: boolean): void {
+  if (playbackWakeLock === undefined) {
+    playbackWakeLock = createPlaybackWakeLockController();
+  }
+  playbackWakeLock?.setActive(active);
+}
+
 export function installPlayerBackendForTest(backend: PlayerBackend): () => void {
   const previousPlayer = player;
   const previousFactory = createPlayerBackend;
-  player = backend;
+  player = null;
   createPlayerBackend = () => backend;
   return () => {
     player = previousPlayer;
     createPlayerBackend = previousFactory;
+  };
+}
+
+export function installPlaybackWakeLockForTest(
+  controller: PlaybackWakeLockController | null
+): () => void {
+  const previousWakeLock = playbackWakeLock;
+  const previousFactory = createPlaybackWakeLockController;
+  playbackWakeLock = controller;
+  createPlaybackWakeLockController = () => controller;
+  return () => {
+    playbackWakeLock = previousWakeLock;
+    createPlaybackWakeLockController = previousFactory;
   };
 }

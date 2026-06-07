@@ -6,7 +6,7 @@
 <template>
   <div :class="effectiveMode === 'list' ? 'playlist-list' : 'playlist-grid'">
     <button
-      v-for="p in playlists"
+      v-for="p in props.playlists"
       :key="p.id"
       :class="effectiveMode === 'list' ? 'playlist-row' : 'playlist-card'"
       @click="onClick($event, p)"
@@ -35,7 +35,7 @@
         >
           {{ p.trackCount }} tracks
           <span
-            v-if="effectiveMode === 'grid' || compact"
+            v-if="effectiveMode === 'grid' || props.compact"
             :class="effectiveMode === 'list' ? 'playlist-row-storage' : 'playlist-storage'"
           >
             · {{ p.storage.label }}
@@ -77,10 +77,10 @@
       />
     </button>
     <div
-      v-if="playlists.length === 0"
+      v-if="props.playlists.length === 0"
       :class="effectiveMode === 'list' ? 'playlist-list-empty' : 'playlist-grid-empty'"
     >
-      {{ emptyLabel ?? "No playlists yet." }}
+      {{ props.emptyLabel ?? "No playlists yet." }}
     </div>
     <q-menu ref="contextMenu" touch-position>
       <q-list dense style="min-width: 200px">
@@ -154,7 +154,7 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
-const playlists = usePlaylistsStore();
+const playlistStore = usePlaylistsStore();
 const settings = useSettingsStore();
 const queue = useQueueStore();
 const player = usePlayerStore();
@@ -181,7 +181,7 @@ function onClick(event: MouseEvent, playlist: Playlist): void {
 
 async function onTogglePin(p: Playlist): Promise<void> {
   try {
-    await playlists.setPinned(p.id, p.pinnedAt === null);
+    await playlistStore.setPinned(p.id, p.pinnedAt === null);
   } catch {
     /* ignore */
   }
@@ -190,7 +190,7 @@ async function onTogglePin(p: Playlist): Promise<void> {
 async function onRowPlay(p: Playlist): Promise<void> {
   if (p.trackCount === 0) return;
   try {
-    const full = await playlists.get(p.id);
+    const full = await playlistStore.get(p.id);
     if (full.tracks.length === 0) return;
     const first = await queue.playFromTracks(full.tracks, 0);
     if (first) await player.play(first);
