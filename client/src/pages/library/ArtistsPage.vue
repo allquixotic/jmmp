@@ -5,33 +5,82 @@
 
 <template>
   <q-page>
-    <PageHero
-      title="Artists"
-      :subtitle="`${filteredArtists.length} of ${catalog.artists.length} artists`"
-    />
-    <ListFilter v-model="filter" placeholder="Filter artists" />
-    <div class="artists-list">
-      <button
-        v-for="a in filteredArtists"
-        :key="a.id"
-        class="artist-row"
-        :class="{ active: selected === a.name }"
-        @click="onArtistClick($event, a)"
-        @contextmenu.prevent.stop="artistMenuTrigger.onContextMenu($event, a)"
-        @pointerdown="artistMenuTrigger.onPointerDown($event, a)"
-        @pointermove="artistMenuTrigger.onPointerMove"
-        @pointerup="artistMenuTrigger.onPointerEnd"
-        @pointercancel="artistMenuTrigger.onPointerEnd"
+    <template v-if="selected">
+      <PageHero
+        :title="selected"
+        :subtitle="artistSubtitle"
+        eyebrow="Artist"
+        view-toggle
       >
-        <q-icon name="person" size="20px" class="q-mr-sm" />
-        <span>{{ a.name }}</span>
-        <span class="text-grey-6 q-ml-auto" />
-      </button>
-    </div>
-    <div v-if="selected" class="artist-detail">
-      <PageHero :title="selected" eyebrow="Artist" view-toggle />
-      <AlbumGrid :albums="albumsForSelected" @select="openAlbum" />
-    </div>
+        <template #actions>
+          <q-btn flat dense icon="arrow_back" label="Artists" @click="clearArtist" />
+          <q-btn
+            unelevated
+            color="primary"
+            icon="play_arrow"
+            label="Play"
+            :disable="tracksForSelected.length === 0"
+            @click="playAll"
+          />
+          <q-btn
+            flat
+            icon="shuffle"
+            label="Shuffle"
+            :disable="tracksForSelected.length === 0"
+            @click="shuffleAll"
+          />
+        </template>
+      </PageHero>
+
+      <section class="artist-section">
+        <h2 class="artist-section-title">Albums</h2>
+        <AlbumGrid
+          :albums="albumsForSelected"
+          empty-label="No albums found for this artist."
+          @select="openAlbum"
+        />
+      </section>
+
+      <section class="artist-section">
+        <h2 class="artist-section-title">Songs</h2>
+        <TrackList
+          :tracks="tracksForSelected"
+          :playing-track-id="player.current?.id ?? null"
+          empty-label="No songs found for this artist."
+          link-metadata
+          @play="playOne"
+          @view-artist="openTrackArtist"
+          @view-album="openTrackAlbum"
+        />
+      </section>
+    </template>
+
+    <template v-else>
+      <PageHero
+        title="Artists"
+        :subtitle="`${filteredArtists.length} of ${catalog.artists.length} artists`"
+      />
+      <ListFilter v-model="filter" placeholder="Filter artists" />
+      <div class="artists-list">
+        <button
+          v-for="a in filteredArtists"
+          :key="a.id"
+          class="artist-row"
+          @click="onArtistClick($event, a)"
+          @dblclick="openArtist(a)"
+          @contextmenu.prevent.stop="artistMenuTrigger.onContextMenu($event, a)"
+          @pointerdown="artistMenuTrigger.onPointerDown($event, a)"
+          @pointermove="artistMenuTrigger.onPointerMove"
+          @pointerup="artistMenuTrigger.onPointerEnd"
+          @pointercancel="artistMenuTrigger.onPointerEnd"
+          @keydown="artistMenuTrigger.onKeyDown($event, a)"
+        >
+          <q-icon name="person" size="20px" class="q-mr-sm" />
+          <span>{{ a.name }}</span>
+          <span class="text-grey-6 q-ml-auto" />
+        </button>
+      </div>
+    </template>
     <LibraryObjectMenu ref="artistMenu" />
   </q-page>
 </template>
@@ -40,8 +89,10 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "src/stores/catalog";
+import { useQueueStore } from "src/stores/queue";
+import { usePlayerStore } from "src/stores/player";
 import { useSourcesStore } from "src/stores/sources";
-import type { Album, Artist } from "@jmmp/shared";
+import type { Album, Artist, Track } from "@jmmp/shared";
 import { usePressContextMenu } from "src/interactions/press-context-menu";
 import type {
   LibraryInfoRow,
@@ -50,20 +101,35 @@ import type {
 import PageHero from "src/components/PageHero.vue";
 import ListFilter from "src/components/ListFilter.vue";
 import AlbumGrid from "src/components/AlbumGrid.vue";
+import TrackList from "src/components/TrackList.vue";
 import LibraryObjectMenu from "src/components/LibraryObjectMenu.vue";
 
 const catalog = useCatalogStore();
+const queue = useQueueStore();
+const player = usePlayerStore();
 const sources = useSourcesStore();
 const route = useRoute();
 const router = useRouter();
 const selected = ref<string | null>(null);
 const albumsForSelected = ref<Album[]>([]);
+const tracksForSelected = ref<Track[]>([]);
 const filter = ref("");
+let artistLoadId = 0;
 
 const filteredArtists = computed(() => {
   const q = filter.value.trim().toLowerCase();
   if (!q) return catalog.artists;
   return catalog.artists.filter((a) => a.name.toLowerCase().includes(q));
+});
+const selectedArtist = computed(() =>
+  selected.value
+    ? (catalog.artists.find((artist) => artist.name === selected.value) ?? null)
+    : null
+);
+const artistSubtitle = computed(() => {
+  const counts = `${albumsForSelected.value.length} albums - ${tracksForSelected.value.length} songs`;
+  const artist = selectedArtist.value;
+  return artist ? `${counts} - ${sourceLabel(artist.sourceIds)}` : counts;
 });
 const artistMenu = ref<{
   show: (event: Event, context: LibraryMenuContext) => void;
@@ -87,14 +153,23 @@ onMounted(async () => {
   }
 });
 
-watch(() => [route.query.artist, route.query.source], () => {
+watch(() => route.query.artist, () => {
   void selectFromRoute();
 });
 
-async function select(name: string, sourceId?: number): Promise<void> {
+async function select(name: string): Promise<void> {
+  const loadId = ++artistLoadId;
   selected.value = name;
+  albumsForSelected.value = [];
+  tracksForSelected.value = [];
   try {
-    albumsForSelected.value = await catalog.loadAlbums(name, sourceId);
+    const [albums, tracks] = await Promise.all([
+      catalog.loadAlbums(name),
+      catalog.loadTracksByArtist(name),
+    ]);
+    if (loadId !== artistLoadId || selected.value !== name) return;
+    albumsForSelected.value = albums;
+    tracksForSelected.value = tracks;
   } catch {
     /* ignore */
   }
@@ -102,33 +177,94 @@ async function select(name: string, sourceId?: number): Promise<void> {
 
 function onArtistClick(event: MouseEvent, artist: Artist): void {
   if (artistMenuTrigger.consumeClick(event, artist)) return;
-  void select(artist.name, artist.sourceId);
+  openArtist(artist);
+}
+
+function openArtist(artist: Artist): void {
+  void router.push({ name: "library-artists", query: { artist: artist.name } });
 }
 
 function openAlbum(a: Album): void {
   void router.push({
     name: "album",
-    query: { album: a.title, artist: a.artist, source: String(a.sourceId) },
+    query: {
+      album: a.title,
+      artist: a.albumArtist || a.artist,
+      source: String(a.sourceId),
+    },
   });
 }
 
 async function selectFromRoute(): Promise<void> {
   const artist = typeof route.query.artist === "string" ? route.query.artist : "";
+  if (!artist) {
+    clearSelectedArtist();
+    return;
+  }
+  await select(artist);
+}
+
+function clearArtist(): void {
+  void router.push({ name: "library-artists" });
+}
+
+function clearSelectedArtist(): void {
+  artistLoadId++;
+  selected.value = null;
+  albumsForSelected.value = [];
+  tracksForSelected.value = [];
+}
+
+function openTrackArtist(artist: string): void {
   if (!artist) return;
-  const sourceId =
-    typeof route.query.source === "string" ? Number(route.query.source) : undefined;
-  await select(artist, Number.isFinite(sourceId) ? sourceId : undefined);
+  void router.push({ name: "library-artists", query: { artist } });
+}
+
+function openTrackAlbum(track: Track): void {
+  if (!track.album) return;
+  void router.push({
+    name: "album",
+    query: {
+      album: track.album,
+      artist: track.albumArtist || track.artist,
+      source: String(track.sourceId),
+    },
+  });
+}
+
+async function playAll(): Promise<void> {
+  if (tracksForSelected.value.length === 0) return;
+  const first = await queue.playFromTracks(tracksForSelected.value, 0);
+  if (first) await player.play(first);
+}
+
+async function shuffleAll(): Promise<void> {
+  const tracks = [...tracksForSelected.value];
+  for (let i = tracks.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = tracks[i]!;
+    tracks[i] = tracks[j]!;
+    tracks[j] = tmp;
+  }
+  const first = await queue.playFromTracks(tracks, 0);
+  if (first) await player.play(first);
+}
+
+async function playOne(_track: Track, index: number): Promise<void> {
+  const first = await queue.playFromTracks(tracksForSelected.value, index);
+  if (first) await player.play(first);
 }
 
 function artistContext(artist: Artist): LibraryMenuContext {
   return {
     kind: "Artist",
     title: artist.name,
-    subtitle: sourceName(artist.sourceId),
+    subtitle: sourceLabel(artist.sourceIds),
     icon: "person",
     playlistLabel: "Add artist to playlist",
     infoRows: artistInfoRows(artist),
-    loadTracks: () => catalog.loadTracksByArtist(artist.name, artist.sourceId),
+    open: () => openArtist(artist),
+    loadTracks: () => catalog.loadTracksByArtist(artist.name),
   };
 }
 
@@ -136,15 +272,16 @@ function artistInfoRows(artist: Artist): LibraryInfoRow[] {
   return [
     { label: "Type", value: "Artist" },
     { label: "Artist", value: artist.name },
-    { label: "Source", value: sourceName(artist.sourceId) },
+    { label: "Sources", value: sourceLabel(artist.sourceIds) },
   ];
 }
 
+function sourceLabel(sourceIds: number[]): string {
+  return sourceIds.map(sourceName).join(", ");
+}
+
 function sourceName(sourceId: number): string {
-  return (
-    sources.sources.find((source) => source.id === sourceId)?.name ??
-    `Source ${sourceId}`
-  );
+  return sources.sources.find((source) => source.id === sourceId)?.name ?? `Source ${sourceId}`;
 }
 </script>
 
@@ -174,13 +311,16 @@ function sourceName(sourceId: number): string {
   background: var(--am-row-hover);
 }
 
-.artist-row.active {
-  background: rgba(255, 45, 85, 0.12);
-  color: #ff6b87;
+.artist-section {
+  margin-top: 22px;
 }
 
-.artist-detail {
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  margin-top: 12px;
+.artist-section-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0;
+  padding: 0 32px;
+  color: var(--am-text-primary);
 }
 </style>

@@ -22,12 +22,15 @@
         <q-icon name="search" size="18px" />
       </template>
       <template v-slot:append>
-        <q-icon
+        <q-btn
           v-if="searchValue"
-          name="close"
-          size="16px"
-          class="cursor-pointer"
-          @click="searchValue = ''"
+          flat
+          round
+          dense
+          size="xs"
+          icon="close"
+          aria-label="Clear search"
+          @click="clearSearch"
         />
       </template>
     </q-input>
@@ -72,17 +75,26 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { usePlaylistsStore } from "src/stores/playlists";
 import { useSessionStore } from "src/stores/session";
 import NavSection from "./NavSection.vue";
 import NavItem from "./NavItem.vue";
 
 const router = useRouter();
+const route = useRoute();
 const playlists = usePlaylistsStore();
 const session = useSessionStore();
 const searchValue = ref("");
+
+watch(
+  () => route.query.q,
+  (value) => {
+    searchValue.value = routeSearchValue(value);
+  },
+  { immediate: true }
+);
 
 onMounted(async () => {
   try {
@@ -94,8 +106,26 @@ onMounted(async () => {
 
 async function onSearchEnter(): Promise<void> {
   const q = searchValue.value.trim();
-  if (!q) return;
+  if (!q) {
+    await clearSearch();
+    return;
+  }
+  if (route.name === "search" && routeSearchValue(route.query.q) === q) return;
   await router.push({ name: "search", query: { q } });
+}
+
+async function clearSearch(): Promise<void> {
+  searchValue.value = "";
+  if (route.name !== "search" || routeSearchValue(route.query.q) === "") return;
+
+  const query = { ...route.query };
+  delete query.q;
+  await router.push({ name: "search", query });
+}
+
+function routeSearchValue(value: unknown): string {
+  if (Array.isArray(value)) return String(value[0] ?? "");
+  return String(value ?? "");
 }
 
 async function onCreatePlaylist(): Promise<void> {

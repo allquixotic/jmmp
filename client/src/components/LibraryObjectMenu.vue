@@ -4,36 +4,36 @@
 -->
 
 <template>
-  <q-menu ref="menu" touch-position no-parent-event @before-show="ensurePlaylists">
-    <q-list dense style="min-width: 230px">
-      <q-item-label header>{{ menuTitle }}</q-item-label>
+  <q-menu
+    ref="menu"
+    touch-position
+    no-parent-event
+    content-class="library-object-menu"
+  >
+    <q-list dense class="library-object-menu-list">
+      <q-item-label header class="ellipsis">{{ menuTitle }}</q-item-label>
+      <q-item v-if="context?.open" clickable v-close-popup @click="openContext">
+        <q-item-section avatar><q-icon name="open_in_new" /></q-item-section>
+        <q-item-section>Open</q-item-section>
+      </q-item>
+      <q-item clickable v-close-popup :disable="actionBusy" @click="playNow">
+        <q-item-section avatar><q-icon name="play_arrow" /></q-item-section>
+        <q-item-section>Play</q-item-section>
+      </q-item>
+      <q-item clickable v-close-popup :disable="actionBusy" @click="addToQueue">
+        <q-item-section avatar><q-icon name="queue_music" /></q-item-section>
+        <q-item-section>Add to queue</q-item-section>
+      </q-item>
+      <q-separator />
+      <q-item clickable v-close-popup @click="playlistPickerOpen = true">
+        <q-item-section avatar><q-icon name="playlist_add" /></q-item-section>
+        <q-item-section>{{ playlistLabel }}…</q-item-section>
+      </q-item>
+      <q-separator />
       <q-item clickable v-close-popup @click="showInfo">
         <q-item-section avatar><q-icon name="info" /></q-item-section>
         <q-item-section>Info</q-item-section>
       </q-item>
-      <q-separator />
-      <q-expansion-item
-        dense
-        default-opened
-        expand-separator
-        icon="playlist_add"
-        :label="playlistLabel"
-      >
-        <q-list dense>
-          <q-item
-            v-for="playlist in sortedPlaylists"
-            :key="playlist.id"
-            clickable
-            v-close-popup
-            @click="addToPlaylist(playlist.id)"
-          >
-            <q-item-section>{{ playlist.name }}</q-item-section>
-          </q-item>
-          <q-item v-if="playlists.loaded && sortedPlaylists.length === 0">
-            <q-item-section class="text-grey-6">No playlists</q-item-section>
-          </q-item>
-        </q-list>
-      </q-expansion-item>
     </q-list>
   </q-menu>
 
@@ -69,48 +69,86 @@
       </q-card-actions>
     </q-card>
   </q-dialog>
+
+  <PlaylistPickerDialog
+    v-model="playlistPickerOpen"
+    :title="playlistLabel"
+    :busy="actionBusy"
+    @selected="addToPlaylist"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useQuasar } from "quasar";
 import { usePlaylistsStore } from "src/stores/playlists";
-import { sortPlaylists } from "src/playlists/sort";
+import { useQueueStore } from "src/stores/queue";
+import { usePlayerStore } from "src/stores/player";
 import type { LibraryMenuContext } from "src/library/context-menu";
 import { definedInfoRows } from "src/library/context-menu";
+import type { Playlist, Track } from "@jmmp/shared";
+import PlaylistPickerDialog from "./PlaylistPickerDialog.vue";
 
 const $q = useQuasar();
 const playlists = usePlaylistsStore();
+const queue = useQueueStore();
+const player = usePlayerStore();
 const menu = ref<{ show: (evt?: Event) => void } | null>(null);
 const context = ref<LibraryMenuContext | null>(null);
 const infoOpen = ref(false);
 const infoLoading = ref(false);
 const infoTrackCount = ref<number | null>(null);
-const cachedTrackIds = ref<number[] | null>(null);
+const cachedTracks = ref<Track[] | null>(null);
+const actionBusy = ref(false);
+const playlistPickerOpen = ref(false);
 let trackRequestId = 0;
 
-const sortedPlaylists = computed(() => sortPlaylists(playlists.playlists));
 const menuTitle = computed(() => context.value?.title ?? "Library item");
 const playlistLabel = computed(
   () => context.value?.playlistLabel ?? "Add to playlist"
 );
 const infoRows = computed(() => definedInfoRows(context.value?.infoRows ?? []));
 
-async function ensurePlaylists(): Promise<void> {
-  if (playlists.loaded) return;
+function show(event: Event, nextContext: LibraryMenuContext): void {
+  context.value = nextContext;
+  cachedTracks.value = null;
+  infoTrackCount.value = null;
+  actionBusy.value = false;
+  playlistPickerOpen.value = false;
+  trackRequestId++;
+  menu.value?.show(event);
+}
+
+function openContext(): void {
+  context.value?.open?.();
+}
+
+async function playNow(): Promise<void> {
+  actionBusy.value = true;
   try {
-    await playlists.load();
+    const tracks = await resolveTracks();
+    if (tracks.length === 0) return;
+    const first = await queue.playFromTracks(tracks, 0);
+    if (first) await player.play(first);
   } catch (err) {
     notifyError(err);
+  } finally {
+    actionBusy.value = false;
   }
 }
 
-function show(event: Event, nextContext: LibraryMenuContext): void {
-  context.value = nextContext;
-  cachedTrackIds.value = null;
-  infoTrackCount.value = null;
-  trackRequestId++;
-  menu.value?.show(event);
+async function addToQueue(): Promise<void> {
+  actionBusy.value = true;
+  try {
+    const tracks = await resolveTracks();
+    if (tracks.length === 0) return;
+    await queue.append(tracks.map((track) => track.id));
+    notifySuccess(`${trackCountLabel(tracks.length)} added to the queue`);
+  } catch (err) {
+    notifyError(err);
+  } finally {
+    actionBusy.value = false;
+  }
 }
 
 function showInfo(): void {
@@ -121,7 +159,7 @@ function showInfo(): void {
 async function loadInfoTrackCount(): Promise<void> {
   infoLoading.value = true;
   try {
-    infoTrackCount.value = (await resolveTrackIds()).length;
+    infoTrackCount.value = (await resolveTracks()).length;
   } catch (err) {
     notifyError(err);
   } finally {
@@ -129,26 +167,39 @@ async function loadInfoTrackCount(): Promise<void> {
   }
 }
 
-async function addToPlaylist(playlistId: number): Promise<void> {
+async function addToPlaylist(playlist: Playlist): Promise<void> {
+  actionBusy.value = true;
   try {
-    const trackIds = await resolveTrackIds();
+    const trackIds = (await resolveTracks()).map((track) => track.id);
     if (trackIds.length === 0) return;
-    await playlists.append(playlistId, trackIds);
+    await playlists.append(playlist.id, trackIds);
+    playlistPickerOpen.value = false;
+    notifySuccess(`${trackCountLabel(trackIds.length)} added to “${playlist.name}”`);
   } catch (err) {
     notifyError(err);
+  } finally {
+    actionBusy.value = false;
   }
 }
 
-async function resolveTrackIds(): Promise<number[]> {
+async function resolveTracks(): Promise<Track[]> {
   const currentContext = context.value;
   if (!currentContext) return [];
-  if (cachedTrackIds.value) return cachedTrackIds.value;
+  if (cachedTracks.value) return cachedTracks.value;
   const requestId = ++trackRequestId;
-  const trackIds = (await currentContext.loadTracks()).map((track) => track.id);
+  const tracks = await currentContext.loadTracks();
   if (context.value === currentContext && requestId === trackRequestId) {
-    cachedTrackIds.value = trackIds;
+    cachedTracks.value = tracks;
   }
-  return trackIds;
+  return tracks;
+}
+
+function trackCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "track" : "tracks"}`;
+}
+
+function notifySuccess(message: string): void {
+  $q.notify({ type: "positive", message, timeout: 2200 });
 }
 
 function notifyError(err: unknown): void {
@@ -166,6 +217,15 @@ defineExpose({ show });
   width: min(520px, calc(100vw - 32px));
   background: #1d2027;
   color: var(--am-text-primary);
+}
+
+:global(.library-object-menu) {
+  width: min(290px, calc(100vw - 24px));
+  max-width: min(290px, calc(100vw - 24px));
+}
+
+.library-object-menu-list {
+  min-width: 250px;
 }
 
 .library-info-heading {

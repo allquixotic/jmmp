@@ -93,6 +93,17 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
     data: { tracks: Array<{ id: number; title: string }> };
   };
 
+  await page.goto("/search?q=First");
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await expect(page.locator(".track-row").first()).toContainText("First Track");
+  await expect(page.locator(".search-input")).toHaveCount(0);
+  const sidebarSearch = page.locator(".side-nav-search input");
+  await sidebarSearch.fill("Second");
+  await sidebarSearch.press("Enter");
+  await expect(page).toHaveURL(/\/search\?q=Second$/);
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await expect(page.locator(".track-row").first()).toContainText("Second Track");
+
   const dragPlaylistResp = await page.request.post("/api/playlists", {
     headers: { "X-jmmp-Client": "1" },
     data: { name: "Drag Check" },
@@ -155,7 +166,9 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
   await expect(page.locator(".track-row.selected")).toHaveCount(3);
 
   await searchRows.nth(1).click({ button: "right" });
-  await page.locator(".q-menu .q-item__section--main", { hasText: "Bulk Add Check" }).click();
+  await page.locator(".q-menu .q-item", { hasText: "Add 3 tracks to playlist" }).click();
+  await expect(page.locator(".playlist-picker")).toBeVisible();
+  await page.locator(".playlist-picker .q-item", { hasText: "Bulk Add Check" }).click();
   await expect
     .poll(async () => {
       const resp = await page.request.get(`/api/playlists/${bulkPlaylistId}`);
@@ -168,12 +181,14 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
     .toEqual(["First Track", "Second Track", "Third Track"]);
 
   await page.goto("/library/albums");
-  const albumCard = page.locator(".album-card", { hasText: "Drag Album" });
-  await expect(albumCard).toHaveCount(1);
-  await albumCard.click({ button: "right" });
+  const albumControl = page.getByRole("button", { name: /^Drag Album/ }).first();
+  await expect(albumControl).toBeVisible();
+  await albumControl.click({ button: "right" });
   await expect(page.locator(".q-menu")).toContainText("Info");
   await expect(page.locator(".q-menu")).toContainText("Add album to playlist");
-  await page.locator(".q-menu .q-item__section--main", { hasText: "Album Add Check" }).click();
+  await page.locator(".q-menu .q-item", { hasText: "Add album to playlist" }).click();
+  await expect(page.locator(".playlist-picker")).toBeVisible();
+  await page.locator(".playlist-picker .q-item", { hasText: "Album Add Check" }).click();
   await expect
     .poll(async () => {
       const resp = await page.request.get(`/api/playlists/${albumPlaylistId}`);
@@ -191,7 +206,9 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
   await artistRow.click({ button: "right" });
   await expect(page.locator(".q-menu")).toContainText("Info");
   await expect(page.locator(".q-menu")).toContainText("Add artist to playlist");
-  await page.locator(".q-menu .q-item__section--main", { hasText: "Artist Add Check" }).click();
+  await page.locator(".q-menu .q-item", { hasText: "Add artist to playlist" }).click();
+  await expect(page.locator(".playlist-picker")).toBeVisible();
+  await page.locator(".playlist-picker .q-item", { hasText: "Artist Add Check" }).click();
   await expect
     .poll(async () => {
       const resp = await page.request.get(`/api/playlists/${artistPlaylistId}`);
@@ -237,4 +254,20 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
       return body.data.tracks.map((track) => track.title);
     })
     .toEqual(["Second Track", "Third Track", "First Track"]);
+
+  const thirdTrackRow = page.locator(".track-row", { hasText: "Third Track" });
+  await thirdTrackRow.click({ button: "right" });
+  await expect(page.locator(".q-menu")).toContainText("Remove from playlist");
+  await page.locator(".q-menu .q-item", { hasText: "Remove from playlist" }).click();
+  await expect(rows).toHaveCount(2);
+  await expect
+    .poll(async () => {
+      const resp = await page.request.get(`/api/playlists/${dragPlaylistId}`);
+      const body = (await resp.json()) as {
+        ok: true;
+        data: { tracks: Array<{ title: string }> };
+      };
+      return body.data.tracks.map((track) => track.title);
+    })
+    .toEqual(["Second Track", "First Track"]);
 });

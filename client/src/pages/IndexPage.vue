@@ -21,7 +21,10 @@
       <TrackList
         :tracks="recentTracks"
         :playing-track-id="player.current?.id ?? null"
+        link-metadata
         @play="play"
+        @view-artist="openTrackArtist"
+        @view-album="openTrackAlbum"
       />
     </section>
 
@@ -69,7 +72,31 @@ async function play(t: Track): Promise<void> {
 }
 
 async function openAlbum(a: Album): Promise<void> {
-  await router.push({ name: "browse", query: { album: a.title, artist: a.artist } });
+  await router.push({
+    name: "album",
+    query: {
+      album: a.title,
+      artist: a.albumArtist || a.artist,
+      source: String(a.sourceId),
+    },
+  });
+}
+
+function openTrackArtist(artist: string): void {
+  if (!artist) return;
+  void router.push({ name: "library-artists", query: { artist } });
+}
+
+function openTrackAlbum(track: Track): void {
+  if (!track.album) return;
+  void router.push({
+    name: "album",
+    query: {
+      album: track.album,
+      artist: track.albumArtist || track.artist,
+      source: String(track.sourceId),
+    },
+  });
 }
 </script>
 

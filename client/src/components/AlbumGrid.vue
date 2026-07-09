@@ -15,6 +15,7 @@
       @pointermove="albumMenuTrigger.onPointerMove"
       @pointerup="albumMenuTrigger.onPointerEnd"
       @pointercancel="albumMenuTrigger.onPointerEnd"
+      @keydown="albumMenuTrigger.onKeyDown($event, album)"
     >
       <AlbumCover
         :hash="album.artHash"
@@ -100,7 +101,7 @@ async function onRowPlay(album: Album): Promise<void> {
   try {
     const tracks = await catalog.loadTracks(
       album.title,
-      album.artist || undefined,
+      album.albumArtist || album.artist || undefined,
       album.sourceId
     );
     if (tracks.length === 0) return;
@@ -119,7 +120,13 @@ function albumContext(album: Album): LibraryMenuContext {
     icon: "album",
     playlistLabel: "Add album to playlist",
     infoRows: albumInfoRows(album),
-    loadTracks: () => catalog.loadTracks(album.title, undefined, album.sourceId),
+    open: () => emit("select", album),
+    loadTracks: () =>
+      catalog.loadTracks(
+        album.title,
+        album.albumArtist || album.artist || undefined,
+        album.sourceId
+      ),
   };
 }
 

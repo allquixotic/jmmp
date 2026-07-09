@@ -15,13 +15,19 @@ import type { PlayerState } from "../audio/pipeline";
 class FakePlayerBackend extends EventTarget {
   playCalls: Array<{ track: Track; options: unknown }> = [];
   params: unknown[] = [];
+  pauseCalls = 0;
+  resumeCalls = 0;
 
   async play(track: Track, options?: unknown): Promise<void> {
     this.playCalls.push({ track, options });
   }
 
-  pause(): void {}
-  resume(): void {}
+  pause(): void {
+    this.pauseCalls += 1;
+  }
+  resume(): void {
+    this.resumeCalls += 1;
+  }
   stop(): void {}
   async seek(): Promise<void> {}
   setParams(params: unknown): void {
@@ -107,6 +113,62 @@ describe("player store", () => {
     fake.emitState("error");
 
     expect(wakeLock.activeStates).toEqual([false, true, false, true, false, false]);
+  });
+
+  test("toggle pauses and resumes an active current track", async () => {
+    setActivePinia(createPinia());
+    const fake = new FakePlayerBackend();
+    restorePlayer = installPlayerBackendForTest(fake);
+    const player = usePlayerStore();
+    player.current = track;
+
+    player.state = "playing";
+    await player.toggle();
+    expect(fake.pauseCalls).toBe(1);
+    expect(fake.resumeCalls).toBe(0);
+
+    player.state = "paused";
+    await player.toggle();
+    expect(fake.pauseCalls).toBe(1);
+    expect(fake.resumeCalls).toBe(1);
+  });
+
+  test("toggle replays the current track after playback ends or errors", async () => {
+    setActivePinia(createPinia());
+    const fake = new FakePlayerBackend();
+    restorePlayer = installPlayerBackendForTest(fake);
+    const sources = useSourcesStore();
+    sources.loaded = true;
+    sources.sources = [];
+    const player = usePlayerStore();
+    player.current = track;
+
+    player.state = "ended";
+    await player.toggle();
+    player.state = "error";
+    await player.toggle();
+
+    expect(fake.playCalls.map(({ track: played }) => played.id)).toEqual([
+      track.id,
+      track.id,
+    ]);
+  });
+
+  test("toggle is inert without a current track or while loading", async () => {
+    setActivePinia(createPinia());
+    const fake = new FakePlayerBackend();
+    restorePlayer = installPlayerBackendForTest(fake);
+    const player = usePlayerStore();
+
+    player.state = "idle";
+    await player.toggle();
+    player.current = track;
+    player.state = "loading";
+    await player.toggle();
+
+    expect(fake.playCalls).toHaveLength(0);
+    expect(fake.pauseCalls).toBe(0);
+    expect(fake.resumeCalls).toBe(0);
   });
 });
 

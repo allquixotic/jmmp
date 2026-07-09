@@ -106,9 +106,15 @@ export const usePlayerStore = defineStore("player", {
       this.ensure().resume();
       setPlaybackWakeLockActive(true);
     },
-    toggle(): void {
-      if (this.state === "playing") this.pause();
-      else if (this.state === "paused") this.resume();
+    async toggle(): Promise<void> {
+      if (!this.current) return;
+      if (this.state === "playing") {
+        this.pause();
+      } else if (this.state === "paused") {
+        this.resume();
+      } else if (this.state === "ended" || this.state === "error") {
+        await this.play(this.current);
+      }
     },
     stop(): void {
       this.ensure().stop();

@@ -86,11 +86,18 @@
         :sort-direction="sortDirection"
         :columns="visibleColumns"
         selectable
-        :selected-track-ids="selectedTrackIds"
+        removable
+        link-metadata
+        :remove-busy="mutationBusy"
+        :current-playlist-id="playlist.id"
+        :selected-tracks="selectedTracks"
         @play="playAt"
         @select="selectTrack"
         @reorder="reorderTracks"
         @sort="cycleSort"
+        @remove="removeTracks"
+        @view-artist="openTrackArtist"
+        @view-album="openTrackAlbum"
       />
 
       <q-dialog v-model="storageDialogOpen">
@@ -157,6 +164,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { useQuasar } from "quasar";
 import { usePlaylistsStore } from "src/stores/playlists";
 import { useQueueStore } from "src/stores/queue";
 import { usePlayerStore } from "src/stores/player";
@@ -164,6 +172,7 @@ import { useSourcesStore } from "src/stores/sources";
 import type { PlaylistWithTracks, Track } from "@jmmp/shared";
 import TrackList from "src/components/TrackList.vue";
 import { moveItem } from "src/playlists/reorder";
+import { removePlaylistOccurrences } from "src/playlists/remove";
 import {
   DEFAULT_PLAYLIST_COLUMNS,
   sortTracksByColumn,
@@ -172,7 +181,7 @@ import {
   type TrackSortKey,
 } from "src/tracks/sort";
 import {
-  updateTrackSelection,
+  updateOccurrenceSelection,
   type SelectionModifiers,
 } from "src/tracks/selection";
 
@@ -182,6 +191,7 @@ const queue = useQueueStore();
 const player = usePlayerStore();
 const sources = useSourcesStore();
 const router = useRouter();
+const $q = useQuasar();
 
 const playlist = ref<PlaylistWithTracks | null>(null);
 const error = ref<string | null>(null);
@@ -191,8 +201,9 @@ const sortDirection = ref<SortDirection>("asc");
 const storageDialogOpen = ref(false);
 const playlistInfoOpen = ref(false);
 const selectedStorageSource = ref<number | "local">("local");
-const selectedTrackIds = ref<number[]>([]);
-const selectionAnchorId = ref<number | null>(null);
+const selectedTracks = ref<Track[]>([]);
+const selectionAnchor = ref<Track | null>(null);
+const mutationBusy = ref(false);
 
 const displayTracks = computed(() => {
   const tracks = playlist.value?.tracks ?? [];
@@ -219,8 +230,8 @@ async function load(): Promise<void> {
     if (!sources.loaded) await sources.load().catch(() => {});
     playlist.value = await playlists.get(parseInt(props.id, 10));
     selectedStorageSource.value = playlist.value.storage.sourceId ?? "local";
-    selectedTrackIds.value = [];
-    selectionAnchorId.value = null;
+    selectedTracks.value = [];
+    selectionAnchor.value = null;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -228,18 +239,14 @@ async function load(): Promise<void> {
 
 onMounted(load);
 watch(() => props.id, load);
-watch(
-  () => displayTracks.value.map((track) => track.id),
-  (ids) => {
-    selectedTrackIds.value = selectedTrackIds.value.filter((id) => ids.includes(id));
-    if (
-      selectionAnchorId.value !== null &&
-      !ids.includes(selectionAnchorId.value)
-    ) {
-      selectionAnchorId.value = selectedTrackIds.value[0] ?? null;
-    }
+watch(displayTracks, (tracks) => {
+  selectedTracks.value = selectedTracks.value.filter((track) =>
+    tracks.includes(track)
+  );
+  if (selectionAnchor.value !== null && !tracks.includes(selectionAnchor.value)) {
+    selectionAnchor.value = selectedTracks.value[0] ?? null;
   }
-);
+});
 
 async function playAll(): Promise<void> {
   if (!playlist.value) return;
@@ -267,10 +274,11 @@ async function playAt(_t: Track, i: number): Promise<void> {
 }
 
 async function reorderTracks(fromIndex: number, toIndex: number): Promise<void> {
-  if (!playlist.value) return;
+  if (!playlist.value || mutationBusy.value) return;
   const previousTracks = playlist.value.tracks;
   const nextTracks = moveItem(previousTracks, fromIndex, toIndex);
   playlist.value = { ...playlist.value, tracks: nextTracks };
+  mutationBusy.value = true;
   try {
     await playlists.setTracks(
       playlist.value.id,
@@ -278,7 +286,44 @@ async function reorderTracks(fromIndex: number, toIndex: number): Promise<void> 
     );
   } catch (err) {
     playlist.value = { ...playlist.value, tracks: previousTracks };
-    error.value = err instanceof Error ? err.message : String(err);
+    reportError(err);
+  } finally {
+    mutationBusy.value = false;
+  }
+}
+
+async function removeTracks(tracksToRemove: Track[]): Promise<void> {
+  const current = playlist.value;
+  if (!current || mutationBusy.value || tracksToRemove.length === 0) return;
+
+  const previousTracks = current.tracks;
+  const nextTracks = removePlaylistOccurrences(previousTracks, tracksToRemove);
+  if (nextTracks.length === previousTracks.length) return;
+
+  const removedCount = previousTracks.length - nextTracks.length;
+  const previousSelection = [...selectedTracks.value];
+  const previousAnchor = selectionAnchor.value;
+  playlist.value = { ...current, tracks: nextTracks };
+  selectedTracks.value = [];
+  selectionAnchor.value = null;
+  mutationBusy.value = true;
+  try {
+    await playlists.setTracks(
+      current.id,
+      nextTracks.map((track) => track.id)
+    );
+    $q.notify({
+      type: "positive",
+      message: `${removedCount} ${removedCount === 1 ? "track" : "tracks"} removed from “${current.name}”`,
+      timeout: 2400,
+    });
+  } catch (err) {
+    playlist.value = { ...current, tracks: previousTracks };
+    selectedTracks.value = previousSelection;
+    selectionAnchor.value = previousAnchor;
+    reportError(err);
+  } finally {
+    mutationBusy.value = false;
   }
 }
 
@@ -343,15 +388,38 @@ function selectTrack(
   _index: number,
   modifiers: SelectionModifiers
 ): void {
-  const next = updateTrackSelection(
-    displayTracks.value.map((t) => t.id),
-    selectedTrackIds.value,
-    selectionAnchorId.value,
-    track.id,
+  const next = updateOccurrenceSelection(
+    displayTracks.value,
+    selectedTracks.value,
+    selectionAnchor.value,
+    track,
     modifiers
   );
-  selectedTrackIds.value = next.selectedIds;
-  selectionAnchorId.value = next.anchorId;
+  selectedTracks.value = next.selected;
+  selectionAnchor.value = next.anchor;
+}
+
+function openTrackArtist(artist: string): void {
+  if (!artist) return;
+  void router.push({ name: "library-artists", query: { artist } });
+}
+
+function openTrackAlbum(track: Track): void {
+  if (!track.album) return;
+  void router.push({
+    name: "album",
+    query: {
+      album: track.album,
+      artist: track.albumArtist || track.artist,
+      source: String(track.sourceId),
+    },
+  });
+}
+
+function reportError(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  error.value = message;
+  $q.notify({ type: "negative", message });
 }
 
 function sourceName(sourceId: number): string {

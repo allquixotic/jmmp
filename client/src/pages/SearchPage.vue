@@ -8,14 +8,16 @@
     <PageHero title="Search">
       <template v-slot:actions>
         <q-input
-          v-model="q"
+          v-if="$q.screen.lt.md"
+          v-model="mobileSearchValue"
           dense
           borderless
           autofocus
+          clearable
           placeholder="Title, artist, or album"
-          debounce="250"
+          :debounce="250"
           class="search-input"
-          @update:model-value="onSearch"
+          @update:model-value="updateSearchRoute"
         >
           <template v-slot:prepend><q-icon name="search" size="18px" /></template>
         </q-input>
@@ -36,7 +38,6 @@
         emit-value
         map-options
         class="search-tool"
-        @update:model-value="rerunSearch"
       />
       <q-select
         v-model="fieldFilter"
@@ -47,7 +48,6 @@
         emit-value
         map-options
         class="search-tool"
-        @update:model-value="rerunSearch"
       />
       <q-select
         v-model="sortMode"
@@ -96,9 +96,12 @@
           :sort-key="sortMode === 'relevance' ? null : sortMode"
           :sort-direction="sortDirection"
           :selected-track-ids="selectedTrackIds"
+          link-metadata
           @select="selectTrack"
           @play="play"
           @sort="cycleSort"
+          @view-artist="openTrackArtist"
+          @view-album="openTrackAlbum"
         />
       </template>
       <template v-else>
@@ -113,9 +116,13 @@
             :sort-key="sortMode === 'relevance' ? null : sortMode"
             :sort-direction="sortDirection"
             :selected-track-ids="selectedTrackIds"
+            :selection-scope-tracks="visibleTracks"
+            link-metadata
             @select="selectTrack"
             @play="(track, index) => playGrouped(group.tracks, track, index)"
             @sort="cycleSort"
+            @view-artist="openTrackArtist"
+            @view-album="openTrackAlbum"
           />
         </section>
       </template>
@@ -133,7 +140,13 @@
           v-for="artist in visibleArtists"
           :key="artist.id"
           class="artist-result"
-          @click="openArtist(artist)"
+          @click="onArtistClick($event, artist)"
+          @contextmenu.prevent.stop="artistMenuTrigger.onContextMenu($event, artist)"
+          @pointerdown="artistMenuTrigger.onPointerDown($event, artist)"
+          @pointermove="artistMenuTrigger.onPointerMove"
+          @pointerup="artistMenuTrigger.onPointerEnd"
+          @pointercancel="artistMenuTrigger.onPointerEnd"
+          @keydown="artistMenuTrigger.onKeyDown($event, artist)"
         >
           <q-icon name="person" size="20px" />
           <span>{{ artist.name }}</span>
@@ -142,6 +155,7 @@
     </div>
 
     <div v-else-if="q && result && visibleTracks.length === 0 && visibleAlbums.length === 0 && visibleArtists.length === 0" class="search-empty">No results.</div>
+    <LibraryObjectMenu ref="artistMenu" />
   </q-page>
 </template>
 
@@ -156,6 +170,12 @@ import type { Album, Artist, SearchResponse, Track } from "@jmmp/shared";
 import PageHero from "src/components/PageHero.vue";
 import TrackList from "src/components/TrackList.vue";
 import AlbumGrid from "src/components/AlbumGrid.vue";
+import LibraryObjectMenu from "src/components/LibraryObjectMenu.vue";
+import { usePressContextMenu } from "src/interactions/press-context-menu";
+import type {
+  LibraryInfoRow,
+  LibraryMenuContext,
+} from "src/library/context-menu";
 import {
   updateTrackSelection,
   type SelectionModifiers,
@@ -175,7 +195,8 @@ const sources = useSourcesStore();
 const route = useRoute();
 const router = useRouter();
 
-const q = ref(String(route.query.q ?? ""));
+const q = computed(() => routeSearchValue(route.query.q));
+const mobileSearchValue = ref(q.value);
 const result = ref<SearchResponse | null>(null);
 const error = ref<string | null>(null);
 const sourceFilter = ref<number | "all">("all");
@@ -186,6 +207,14 @@ const groupMode = ref<"none" | "source" | "artist" | "album">("none");
 const selectedTrackIds = ref<number[]>([]);
 const selectionAnchorId = ref<number | null>(null);
 const visibleColumns = ref<TrackColumnKey[]>([...DEFAULT_SEARCH_COLUMNS]);
+let searchRunId = 0;
+const artistMenu = ref<{
+  show: (event: Event, context: LibraryMenuContext) => void;
+} | null>(null);
+const artistMenuTrigger = usePressContextMenu<Artist>({
+  keyFor: (artist) => artist.id,
+  open: (event, artist) => artistMenu.value?.show(event, artistContext(artist)),
+});
 
 const sourceOptions = computed(() => [
   { label: "All", value: "all" },
@@ -251,8 +280,19 @@ const groupedTracks = computed(() => {
 
 onMounted(async () => {
   if (!sources.loaded) await sources.load().catch(() => {});
-  if (q.value) await onSearch(q.value);
 });
+
+watch(q, (value) => {
+  mobileSearchValue.value = value;
+});
+
+watch(
+  [q, sourceFilter, fieldFilter],
+  ([search, sourceId, field]) => {
+    void runSearch(search, sourceId, field);
+  },
+  { immediate: true }
+);
 
 watch(
   () => visibleTracks.value.map((track) => track.id),
@@ -267,21 +307,48 @@ watch(
   }
 );
 
-async function onSearch(v: string | number | null): Promise<void> {
-  const s = String(v ?? "").trim();
+async function runSearch(
+  search: string,
+  sourceId: number | "all",
+  field: "any" | "title" | "artist" | "album"
+): Promise<void> {
+  const runId = ++searchRunId;
+  const s = search.trim();
+  result.value = null;
+  error.value = null;
   if (s.length < 2) {
-    result.value = null;
     return;
   }
-  error.value = null;
+
   try {
-    result.value = await catalog.runSearch(s, {
-      sourceId: sourceFilter.value,
-      field: fieldFilter.value,
+    const response = await catalog.runSearch(s, {
+      sourceId,
+      field,
     });
+    if (runId !== searchRunId) return;
+    result.value = response;
   } catch (err) {
+    if (runId !== searchRunId) return;
     error.value = err instanceof Error ? err.message : String(err);
   }
+}
+
+function updateSearchRoute(value: string | number | null): void {
+  const next = String(value ?? "").trim();
+  if (next === q.value) {
+    mobileSearchValue.value = q.value;
+    return;
+  }
+
+  const query = { ...route.query };
+  if (next) query.q = next;
+  else delete query.q;
+  void router.replace({ name: "search", query });
+}
+
+function routeSearchValue(value: unknown): string {
+  if (Array.isArray(value)) return String(value[0] ?? "");
+  return String(value ?? "");
 }
 
 async function play(_t: Track, i: number): Promise<void> {
@@ -297,41 +364,98 @@ async function playGrouped(tracks: Track[], _t: Track, i: number): Promise<void>
 function openAlbum(a: Album): void {
   void router.push({
     name: "album",
-    query: { album: a.title, artist: a.artist, source: String(a.sourceId) },
+    query: {
+      album: a.title,
+      artist: a.albumArtist || a.artist,
+      source: String(a.sourceId),
+    },
   });
 }
 
 function openArtist(artist: Artist): void {
   void router.push({
     name: "library-artists",
-    query: { artist: artist.name, source: String(artist.sourceId) },
+    query: { artist: artist.name },
   });
 }
 
-function rerunSearch(): void {
-  void onSearch(q.value);
+function onArtistClick(event: MouseEvent, artist: Artist): void {
+  if (artistMenuTrigger.consumeClick(event, artist)) return;
+  openArtist(artist);
+}
+
+function artistContext(artist: Artist): LibraryMenuContext {
+  const filteredSourceId =
+    sourceFilter.value === "all" ? undefined : sourceFilter.value;
+  return {
+    kind: "Artist",
+    title: artist.name,
+    subtitle: sourceLabel(artist.sourceIds),
+    icon: "person",
+    playlistLabel: "Add artist to playlist",
+    infoRows: artistInfoRows(artist),
+    open: () => openArtist(artist),
+    loadTracks: () => catalog.loadTracksByArtist(artist.name, filteredSourceId),
+  };
+}
+
+function artistInfoRows(artist: Artist): LibraryInfoRow[] {
+  return [
+    { label: "Type", value: "Artist" },
+    { label: "Artist", value: artist.name },
+    { label: "Sources", value: sourceLabel(artist.sourceIds) },
+  ];
+}
+
+function openTrackArtist(artist: string): void {
+  void router.push({
+    name: "library-artists",
+    query: { artist },
+  });
+}
+
+function openTrackAlbum(track: Track): void {
+  if (!track.album) return;
+  void router.push({
+    name: "album",
+    query: {
+      album: track.album,
+      artist: track.albumArtist || track.artist,
+      source: String(track.sourceId),
+    },
+  });
 }
 
 function filterTracks(tracks: Track[]): Track[] {
   return filterBySource(tracks).filter((track) => {
-    const needle = q.value.trim().toLocaleLowerCase();
-    if (!needle || fieldFilter.value === "any") return true;
-    if (fieldFilter.value === "title") {
-      return track.title.toLocaleLowerCase().includes(needle);
-    }
+    const tokens = searchTokens(q.value);
+    if (tokens.length === 0 || fieldFilter.value === "any") return true;
+    if (fieldFilter.value === "title") return tokensCoveredByTexts(tokens, [track.title]);
     if (fieldFilter.value === "artist") {
-      return (
-        track.artist.toLocaleLowerCase().includes(needle) ||
-        (track.albumArtist ?? "").toLocaleLowerCase().includes(needle)
-      );
+      return tokensCoveredByTexts(tokens, [track.artist, track.albumArtist ?? ""]);
     }
-    return track.album.toLocaleLowerCase().includes(needle);
+    return tokensCoveredByTexts(tokens, [track.album]);
   });
 }
 
-function filterBySource<T extends { sourceId: number }>(items: T[]): T[] {
+function filterBySource<T extends { sourceId?: number; sourceIds?: number[] }>(items: T[]): T[] {
   if (sourceFilter.value === "all") return items;
-  return items.filter((item) => item.sourceId === sourceFilter.value);
+  return items.filter((item) =>
+    item.sourceIds
+      ? item.sourceIds.includes(sourceFilter.value as number)
+      : item.sourceId === sourceFilter.value
+  );
+}
+
+function searchTokens(value: string): string[] {
+  return [...value.matchAll(/[\p{L}\p{N}]+/gu)].map((match) =>
+    match[0].toLocaleLowerCase()
+  );
+}
+
+function tokensCoveredByTexts(tokens: string[], texts: string[]): boolean {
+  const haystack = searchTokens(texts.join(" "));
+  return tokens.every((token) => haystack.some((word) => word.startsWith(token)));
 }
 
 function sortTracks(tracks: Track[]): Track[] {
@@ -353,6 +477,10 @@ function groupLabel(track: Track): string {
 
 function sourceName(sourceId: number): string {
   return sources.sources.find((source) => source.id === sourceId)?.name ?? `Source ${sourceId}`;
+}
+
+function sourceLabel(sourceIds: number[]): string {
+  return sourceIds.map(sourceName).join(", ");
 }
 
 function selectTrack(

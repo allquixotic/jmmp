@@ -21,14 +21,17 @@
       :tracks="tracks"
       :playing-track-id="player.current?.id ?? null"
       empty-label="No tracks in this album yet."
+      link-metadata
       @play="playAt"
+      @view-artist="openTrackArtist"
+      @view-album="openTrackAlbum"
     />
   </q-page>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "src/api";
 import { useQueueStore } from "src/stores/queue";
 import { usePlayerStore } from "src/stores/player";
@@ -37,6 +40,7 @@ import AlbumCover from "src/components/AlbumCover.vue";
 import TrackList from "src/components/TrackList.vue";
 
 const route = useRoute();
+const router = useRouter();
 const queue = useQueueStore();
 const player = usePlayerStore();
 
@@ -85,6 +89,23 @@ async function shuffleAll(): Promise<void> {
 async function playAt(_t: Track, i: number): Promise<void> {
   const first = await queue.playFromTracks(tracks.value, i);
   if (first) await player.play(first);
+}
+
+function openTrackArtist(artist: string): void {
+  if (!artist) return;
+  void router.push({ name: "library-artists", query: { artist } });
+}
+
+function openTrackAlbum(track: Track): void {
+  if (!track.album) return;
+  void router.push({
+    name: "album",
+    query: {
+      album: track.album,
+      artist: track.albumArtist || track.artist,
+      source: String(track.sourceId),
+    },
+  });
 }
 </script>
 

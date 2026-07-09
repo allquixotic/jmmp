@@ -103,7 +103,14 @@
           class="volume-slider"
           @update:model-value="setVolume"
         />
-        <q-btn flat round dense size="sm" icon="queue_music">
+        <q-btn
+          flat
+          round
+          dense
+          size="sm"
+          icon="queue_music"
+          @click="$emit('open-now-playing')"
+        >
           <q-tooltip>Up next</q-tooltip>
         </q-btn>
       </div>

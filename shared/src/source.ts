@@ -44,8 +44,8 @@ export type SourceSecrets =
 
 export interface Artist {
   id: string;
-  sourceId: number;
   name: string;
+  sourceIds: number[];
 }
 
 export interface Album {

@@ -682,8 +682,8 @@ export function mapQobuzSearchResponse(
     if (track.artist) {
       artists.set(`${sourceId}::${track.artist}`, {
         id: `${sourceId}::${track.artist}`,
-        sourceId,
         name: track.artist,
+        sourceIds: [sourceId],
       });
     }
     if (track.album) {
@@ -702,7 +702,13 @@ export function mapQobuzSearchResponse(
   for (const item of collection(raw, "artists")) {
     const name = text(item["name"]);
     const id = text(item["id"]) || name;
-    if (name) artists.set(`${sourceId}::artist:${id}`, { id: `${sourceId}::artist:${id}`, sourceId, name });
+    if (name) {
+      artists.set(`${sourceId}::artist:${id}`, {
+        id: `${sourceId}::artist:${id}`,
+        name,
+        sourceIds: [sourceId],
+      });
+    }
   }
 
   for (const item of collection(raw, "albums")) {

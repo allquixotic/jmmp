@@ -50,7 +50,11 @@ onMounted(async () => {
 function onSelect(a: Album): void {
   void router.push({
     name: "album",
-    query: { album: a.title, artist: a.artist, source: String(a.sourceId) },
+    query: {
+      album: a.title,
+      artist: a.albumArtist || a.artist,
+      source: String(a.sourceId),
+    },
   });
 }
 </script>

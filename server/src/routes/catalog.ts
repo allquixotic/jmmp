@@ -48,6 +48,15 @@ interface CatalogSearchFilters {
   field: SearchField;
 }
 
+interface NormalizedSearchQuery {
+  original: string;
+  printable: string;
+  tokens: string[];
+  lowerTokens: string[];
+  ftsExpression: string;
+  indexableLength: number;
+}
+
 interface AlbumRow {
   source_id: number;
   album: string;
@@ -103,22 +112,22 @@ get("/api/catalog/artists", async (req: Req) => {
   }
   const rows = req.ctx.db
     .query<
-      { artist: string; source_id: number; track_count: number },
+      { artist: string; source_id: number },
       typeof params
     >(
-      `SELECT artist, source_id, COUNT(*) AS track_count
+      `SELECT artist, source_id
        FROM tracks
        WHERE ${conditions.join(" AND ")}
        GROUP BY artist, source_id
-       ORDER BY artist COLLATE NOCASE`
+       ORDER BY artist COLLATE NOCASE, source_id`
     )
     .all(...params);
+  const artists = new Map<string, Artist>();
+  for (const row of rows) {
+    addArtist(artists, row.artist, row.source_id);
+  }
   const body: ArtistListResponse = {
-    artists: rows.map((r) => ({
-      id: `${r.source_id}::${r.artist}`,
-      sourceId: r.source_id,
-      name: r.artist,
-    })),
+    artists: [...artists.values()],
   };
   return ok(body);
 });
@@ -224,7 +233,17 @@ get("/api/catalog/search", async (req: Req) => {
     sourceId: sourceId !== null && Number.isFinite(sourceId) ? sourceId : null,
     field,
   };
-  const local = searchLocalCatalog(req.ctx.db, q, filters);
+  const search = normalizeSearchQuery(q);
+  if (!search || search.indexableLength < 2) {
+    const empty: SearchResponse = {
+      tracks: [],
+      albums: [],
+      artists: [],
+      fromQobuzLive: false,
+    };
+    return ok(empty);
+  }
+  const local = searchLocalCatalog(req.ctx.db, search, filters);
   const tracks = [...local.tracks];
   const seenTrackKeys = new Set(tracks.map(trackResultKey));
   const artistSet = new Map(
@@ -232,7 +251,7 @@ get("/api/catalog/search", async (req: Req) => {
   );
   const albumSet = new Map(local.albums.map((album) => [album.id, album]));
 
-  const qobuz = await searchQobuz(req, q, {
+  const qobuz = await searchQobuz(req, search, {
     sourceId: filters.sourceId,
     field,
   });
@@ -242,12 +261,7 @@ get("/api/catalog/search", async (req: Req) => {
     if (seenTrackKeys.has(key)) continue;
     seenTrackKeys.add(key);
     tracks.push(upserted);
-    if (t.artist)
-      artistSet.set(`${t.sourceId}::${t.artist}`, {
-        id: `${t.sourceId}::${t.artist}`,
-        sourceId: t.sourceId,
-        name: t.artist,
-      });
+    if (t.artist) addArtist(artistSet, t.artist, t.sourceId);
     if (t.album)
       albumSet.set(`${t.sourceId}::${t.album}`, {
         id: `${t.sourceId}::${t.album}`,
@@ -257,10 +271,10 @@ get("/api/catalog/search", async (req: Req) => {
       });
   }
   for (const album of qobuz.albums) albumSet.set(album.id, album);
-  for (const artist of qobuz.artists) artistSet.set(artist.id, artist);
+  for (const artist of qobuz.artists) addArtist(artistSet, artist.name, artist.sourceIds);
 
   const body: SearchResponse = {
-    tracks,
+    tracks: rankTracks(tracks, search, field),
     albums: [...albumSet.values()],
     artists: [...artistSet.values()],
     fromQobuzLive: qobuz.fromQobuzLive,
@@ -270,10 +284,14 @@ get("/api/catalog/search", async (req: Req) => {
 
 export function searchLocalCatalog(
   db: Database,
-  query: string,
+  query: string | NormalizedSearchQuery,
   filters: CatalogSearchFilters
 ): { tracks: Track[]; albums: Album[]; artists: Artist[] } {
-  const conditions = localSearchConditions(query, filters);
+  const search = typeof query === "string" ? normalizeSearchQuery(query) : query;
+  if (!search || search.indexableLength < 2) {
+    return { tracks: [], albums: [], artists: [] };
+  }
+  const conditions = localSearchConditions(search, filters);
   const rows = db
     .query<TrackRow, unknown[]>(
       `SELECT t.* FROM tracks t
@@ -282,7 +300,7 @@ export function searchLocalCatalog(
        LIMIT 200`
     )
     .all(...conditions.params);
-  const tracks = rows.map(trackFromRow);
+  const tracks = rankTracks(rows.map(trackFromRow), search, filters.field);
   const albumSet = new Map<string, Album>();
   const artistSet = new Map<string, Artist>();
 
@@ -293,10 +311,10 @@ export function searchLocalCatalog(
     }
   }
 
-  for (const album of searchLocalAlbums(db, query, filters)) {
+  for (const album of searchLocalAlbums(db, search, filters)) {
     albumSet.set(album.id, album);
   }
-  for (const artist of searchLocalArtists(db, query, filters)) {
+  for (const artist of searchLocalArtists(db, search, filters)) {
     artistSet.set(artist.id, artist);
   }
 
@@ -309,11 +327,11 @@ export function searchLocalCatalog(
 
 function searchLocalAlbums(
   db: Database,
-  query: string,
+  search: NormalizedSearchQuery,
   filters: CatalogSearchFilters
 ): Album[] {
   if (filters.field === "title") return [];
-  const conditions = localSearchConditions(query, filters);
+  const conditions = localSearchConditions(search, filters);
   const rows = db
     .query<AlbumRow, unknown[]>(
       `SELECT t.source_id, t.album, MAX(t.artist) AS artist,
@@ -342,11 +360,11 @@ function searchLocalAlbums(
 
 function searchLocalArtists(
   db: Database,
-  query: string,
+  search: NormalizedSearchQuery,
   filters: CatalogSearchFilters
 ): Artist[] {
   if (filters.field === "title" || filters.field === "album") return [];
-  const conditions = localSearchConditions(query, filters);
+  const conditions = localSearchConditions(search, filters);
   const rows = db
     .query<ArtistRow, unknown[]>(
       `WITH matched AS (
@@ -370,11 +388,9 @@ function searchLocalArtists(
        LIMIT 100`
     )
     .all(...conditions.params);
-  return rows.map((row) => ({
-    id: `${row.source_id}::${row.name}`,
-    sourceId: row.source_id,
-    name: row.name,
-  }));
+  const artists = new Map<string, Artist>();
+  for (const row of rows) addArtist(artists, row.name, row.source_id);
+  return [...artists.values()];
 }
 
 function addTrackAlbum(albumSet: Map<string, Album>, track: Track): void {
@@ -395,43 +411,69 @@ function addTrackAlbum(albumSet: Map<string, Album>, track: Track): void {
 function addTrackArtists(artistSet: Map<string, Artist>, track: Track): void {
   for (const name of [track.artist, track.albumArtist]) {
     if (!name) continue;
-    const id = `${track.sourceId}::${name}`;
-    if (artistSet.has(id)) continue;
-    artistSet.set(id, { id, sourceId: track.sourceId, name });
+    addArtist(artistSet, name, track.sourceId);
   }
 }
 
 function localSearchConditions(
-  query: string,
+  search: NormalizedSearchQuery,
   filters: CatalogSearchFilters
 ): { sql: string; params: unknown[] } {
   const conditions = ["tracks_fts MATCH ?"];
-  const params: unknown[] = [ftsPrefixQuery(query)];
+  const params: unknown[] = [fieldScopedFtsExpression(search, filters.field)];
   if (filters.sourceId !== null) {
     conditions.push("t.source_id = ?");
     params.push(filters.sourceId);
   }
-  const like = `%${query}%`;
-  if (filters.field === "title") {
-    conditions.push("t.title LIKE ?");
-    params.push(like);
-  } else if (filters.field === "artist") {
-    conditions.push("(t.artist LIKE ? OR t.album_artist LIKE ?)");
-    params.push(like, like);
-  } else if (filters.field === "album") {
-    conditions.push("t.album LIKE ?");
-    params.push(like);
-  }
   return { sql: conditions.join(" AND "), params };
 }
 
-function ftsPrefixQuery(query: string): string {
-  return query
-    .split(/\s+/)
-    .map((token) => token.replace(/["*]/g, "").trim())
-    .filter(Boolean)
-    .map((token) => `${token}*`)
-    .join(" ");
+function normalizeSearchQuery(query: string): NormalizedSearchQuery | null {
+  const printable = [...query]
+    .map((char) => (isPrintableSearchChar(char) ? char : " "))
+    .join("")
+    .trim();
+  const tokens = [...printable.matchAll(/[\p{L}\p{N}]+/gu)].map((match) => match[0]);
+  const lowerTokens = tokens.map((token) => token.toLocaleLowerCase());
+  const indexableLength = tokens.join("").length;
+  if (tokens.length === 0) {
+    return {
+      original: query,
+      printable,
+      tokens,
+      lowerTokens,
+      ftsExpression: "",
+      indexableLength,
+    };
+  }
+  return {
+    original: query,
+    printable,
+    tokens,
+    lowerTokens,
+    ftsExpression: tokens.map(quotedFtsPrefixToken).join(" "),
+    indexableLength,
+  };
+}
+
+function isPrintableSearchChar(char: string): boolean {
+  const codePoint = char.codePointAt(0);
+  if (codePoint === undefined) return false;
+  return codePoint >= 0x20 && codePoint !== 0x7f;
+}
+
+function quotedFtsPrefixToken(token: string): string {
+  return `"${token.replace(/"/g, '""')}"*`;
+}
+
+function fieldScopedFtsExpression(
+  search: NormalizedSearchQuery,
+  field: SearchField
+): string {
+  if (field === "title") return `title : (${search.ftsExpression})`;
+  if (field === "artist") return `{artist album_artist} : (${search.ftsExpression})`;
+  if (field === "album") return `album : (${search.ftsExpression})`;
+  return search.ftsExpression;
 }
 
 function searchField(value: string | null): SearchField {
@@ -439,22 +481,22 @@ function searchField(value: string | null): SearchField {
   return "any";
 }
 
-function matchesSearchField(t: Track, query: string, field: SearchField): boolean {
+function matchesSearchField(
+  t: Track,
+  search: NormalizedSearchQuery,
+  field: SearchField
+): boolean {
   if (field === "any") return true;
-  const needle = query.toLocaleLowerCase();
-  if (field === "title") return t.title.toLocaleLowerCase().includes(needle);
+  if (field === "title") return tokensCoveredByTexts(search.lowerTokens, [t.title]);
   if (field === "artist") {
-    return (
-      t.artist.toLocaleLowerCase().includes(needle) ||
-      (t.albumArtist ?? "").toLocaleLowerCase().includes(needle)
-    );
+    return tokensCoveredByTexts(search.lowerTokens, [t.artist, t.albumArtist ?? ""]);
   }
-  return t.album.toLocaleLowerCase().includes(needle);
+  return tokensCoveredByTexts(search.lowerTokens, [t.album]);
 }
 
 async function searchQobuz(
   req: Req,
-  query: string,
+  search: NormalizedSearchQuery,
   filters: { sourceId: number | null; field: SearchField }
 ): Promise<SearchResponse> {
   const where = ["kind = 'qobuz'"];
@@ -476,23 +518,23 @@ async function searchQobuz(
     try {
       const loaded = await loadAdapter(req.ctx.db, req.ctx.machineKey, source.id);
       if (!loaded?.adapter.search) continue;
-      const result = await loaded.adapter.search(query, 50);
+      const result = await loaded.adapter.search(search.printable || search.original, 50);
       combined.fromQobuzLive = true;
       const tracks = result.tracks.filter((track) =>
-        matchesSearchField(track, query, filters.field)
+        matchesSearchField(track, search, filters.field)
       );
       const albums =
         filters.field === "title"
           ? []
           : result.albums.filter((album) =>
-              albumMatchesSearchField(album, query, filters.field)
+              albumMatchesSearchField(album, search, filters.field)
             );
       const artists =
         filters.field === "title" || filters.field === "album"
           ? []
           : result.artists.filter((artist) =>
               filters.field === "any" || filters.field === "artist"
-                ? artist.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+                ? tokensCoveredByTexts(search.lowerTokens, [artist.name])
                 : true
             );
       combined.albums.push(...albums);
@@ -510,15 +552,104 @@ async function searchQobuz(
 
 function albumMatchesSearchField(
   album: { title: string; artist: string; albumArtist?: string },
-  query: string,
+  search: NormalizedSearchQuery,
   field: SearchField
 ): boolean {
-  const needle = query.toLocaleLowerCase();
-  const title = album.title.toLocaleLowerCase();
-  const artist = (album.artist || album.albumArtist || "").toLocaleLowerCase();
-  if (field === "album") return title.includes(needle);
-  if (field === "artist") return artist.includes(needle);
-  return title.includes(needle) || artist.includes(needle);
+  if (field === "album") return tokensCoveredByTexts(search.lowerTokens, [album.title]);
+  if (field === "artist") {
+    return tokensCoveredByTexts(search.lowerTokens, [album.artist, album.albumArtist ?? ""]);
+  }
+  return tokensCoveredByTexts(search.lowerTokens, [
+    album.title,
+    album.artist,
+    album.albumArtist ?? "",
+  ]);
+}
+
+function addArtist(
+  artists: Map<string, Artist>,
+  name: string,
+  sourceIds: number | number[]
+): void {
+  if (!name) return;
+  const nextSourceIds = Array.isArray(sourceIds) ? sourceIds : [sourceIds];
+  const existing = artists.get(name);
+  if (!existing) {
+    artists.set(name, {
+      id: name,
+      name,
+      sourceIds: [...new Set(nextSourceIds)].sort((a, b) => a - b),
+    });
+    return;
+  }
+  existing.sourceIds = [...new Set([...existing.sourceIds, ...nextSourceIds])].sort(
+    (a, b) => a - b
+  );
+}
+
+function rankTracks(
+  tracks: Track[],
+  search: NormalizedSearchQuery,
+  field: SearchField
+): Track[] {
+  return tracks
+    .map((track, index) => ({
+      track,
+      index,
+      score: trackRelevanceScore(track, search, field),
+    }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.track);
+}
+
+function trackRelevanceScore(
+  track: Track,
+  search: NormalizedSearchQuery,
+  field: SearchField
+): number {
+  const titleTokens = textTokens(track.title);
+  const artistTokens = textTokens([track.artist, track.albumArtist ?? ""].join(" "));
+  const albumTokens = textTokens(track.album);
+  const titleHits = coveredTokenCount(search.lowerTokens, titleTokens);
+  const artistHits = coveredTokenCount(search.lowerTokens, artistTokens);
+  const albumHits = coveredTokenCount(search.lowerTokens, albumTokens);
+  const artistTitleHits = coveredTokenCount(search.lowerTokens, [
+    ...artistTokens,
+    ...titleTokens,
+  ]);
+  let score = 0;
+  if (
+    artistTitleHits === search.lowerTokens.length &&
+    artistHits > 0 &&
+    titleHits > 0
+  ) {
+    score += 20_000;
+  } else if (artistTitleHits === search.lowerTokens.length) {
+    score += 10_000;
+  }
+  if (titleHits === search.lowerTokens.length) score += 5_000;
+  score += titleHits * 300 + artistHits * 200 + albumHits * 100;
+  if (field === "title") score += titleHits * 500;
+  if (field === "artist") score += artistHits * 500;
+  if (field === "album") score += albumHits * 500;
+  return score;
+}
+
+function tokensCoveredByTexts(queryTokens: string[], texts: string[]): boolean {
+  const haystackTokens = textTokens(texts.join(" "));
+  return coveredTokenCount(queryTokens, haystackTokens) === queryTokens.length;
+}
+
+function coveredTokenCount(queryTokens: string[], haystackTokens: string[]): number {
+  return queryTokens.filter((queryToken) =>
+    haystackTokens.some((token) => token.startsWith(queryToken))
+  ).length;
+}
+
+function textTokens(text: string): string[] {
+  return [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((match) =>
+    match[0].toLocaleLowerCase()
+  );
 }
 
 function trackResultKey(t: Pick<Track, "sourceId" | "sourceTrackId">): string {

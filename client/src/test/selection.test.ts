@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { trackActionIds, updateTrackSelection } from "../tracks/selection";
+import {
+  trackActionIds,
+  updateOccurrenceSelection,
+  updateTrackSelection,
+} from "../tracks/selection";
 
 describe("track selection", () => {
   const ids = [10, 11, 12, 13, 14];
@@ -41,5 +45,25 @@ describe("track selection", () => {
   test("row actions use the full selection only when the clicked row is selected", () => {
     expect(trackActionIds([11, 12, 13], 12)).toEqual([11, 12, 13]);
     expect(trackActionIds([11, 12, 13], 14)).toEqual([14]);
+  });
+
+  test("playlist selection keeps duplicate track occurrences distinct", () => {
+    const first = { id: 7, occurrence: "first" };
+    const duplicate = { id: 7, occurrence: "duplicate" };
+    const other = { id: 8, occurrence: "other" };
+    const ordered = [first, duplicate, other];
+
+    expect(updateOccurrenceSelection(ordered, [], null, duplicate)).toEqual({
+      selected: [duplicate],
+      anchor: duplicate,
+    });
+    expect(
+      updateOccurrenceSelection(ordered, [duplicate], duplicate, other, {
+        range: true,
+      })
+    ).toEqual({
+      selected: [duplicate, other],
+      anchor: duplicate,
+    });
   });
 });

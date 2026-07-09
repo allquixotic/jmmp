@@ -11,6 +11,11 @@ export interface SelectionResult {
   anchorId: number | null;
 }
 
+export interface OccurrenceSelectionResult<T> {
+  selected: T[];
+  anchor: T | null;
+}
+
 export function updateTrackSelection(
   orderedIds: number[],
   currentSelection: number[],
@@ -56,4 +61,44 @@ export function trackActionIds(
   return selectedIds.includes(clickedId) && selectedIds.length > 0
     ? selectedIds
     : [clickedId];
+}
+
+/**
+ * Selection variant for ordered collections where the same track ID may occur
+ * more than once. Object identity keeps duplicate playlist entries distinct.
+ */
+export function updateOccurrenceSelection<T>(
+  orderedItems: T[],
+  currentSelection: T[],
+  anchor: T | null,
+  clicked: T,
+  modifiers: SelectionModifiers = {}
+): OccurrenceSelectionResult<T> {
+  if (!orderedItems.includes(clicked)) {
+    return { selected: currentSelection, anchor };
+  }
+
+  if (modifiers.range && anchor !== null && orderedItems.includes(anchor)) {
+    const start = orderedItems.indexOf(anchor);
+    const end = orderedItems.indexOf(clicked);
+    const range = orderedItems.slice(Math.min(start, end), Math.max(start, end) + 1);
+    if (!modifiers.additive) return { selected: range, anchor };
+    const selected = new Set([...currentSelection, ...range]);
+    return {
+      selected: orderedItems.filter((item) => selected.has(item)),
+      anchor,
+    };
+  }
+
+  if (modifiers.additive) {
+    const selected = new Set(currentSelection);
+    if (selected.has(clicked)) selected.delete(clicked);
+    else selected.add(clicked);
+    return {
+      selected: orderedItems.filter((item) => selected.has(item)),
+      anchor: clicked,
+    };
+  }
+
+  return { selected: [clicked], anchor: clicked };
 }

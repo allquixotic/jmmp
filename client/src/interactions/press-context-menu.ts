@@ -1,7 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
-import { ref, shallowRef } from "vue";
+import { onBeforeUnmount, ref, shallowRef } from "vue";
 import {
   LONG_PRESS_CONTEXT_MENU_MS,
   movedPastContextMenuTolerance,
@@ -11,7 +11,7 @@ import {
 
 interface PressState {
   pointerId: number;
-  key: string;
+  key: string | number;
   startX: number;
   startY: number;
   timeoutId: number;
@@ -19,12 +19,12 @@ interface PressState {
 }
 
 interface PressContextMenuOptions<T> {
-  keyFor: (item: T) => string;
+  keyFor: (item: T) => string | number;
   open: (event: MouseEvent | PointerEvent, item: T) => void;
 }
 
 export function usePressContextMenu<T>(options: PressContextMenuOptions<T>) {
-  const suppressNextClickKey = ref<string | null>(null);
+  const suppressNextClickKey = ref<string | number | null>(null);
   const suppressContextMenuUntil = ref(0);
   const pressState = shallowRef<PressState | null>(null);
 
@@ -90,6 +90,28 @@ export function usePressContextMenu<T>(options: PressContextMenuOptions<T>) {
     }
   }
 
+  function onKeyDown(event: KeyboardEvent, item: T): void {
+    const isContextMenuKey = event.key === "ContextMenu";
+    const isShiftF10 = event.shiftKey && event.key === "F10";
+    if (!isContextMenuKey && !isShiftF10) return;
+
+    cancelLongPress();
+    event.preventDefault();
+    event.stopPropagation();
+
+    const target = event.currentTarget;
+    const rect = target instanceof HTMLElement ? target.getBoundingClientRect() : null;
+    options.open(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        button: 2,
+        clientX: rect ? rect.left + Math.min(32, rect.width / 2) : 0,
+        clientY: rect ? rect.top + Math.min(32, rect.height / 2) : 0,
+      }),
+      item
+    );
+  }
+
   function cancelLongPress(pointerId?: number): void {
     const state = pressState.value;
     if (!state || (pointerId !== undefined && state.pointerId !== pointerId)) return;
@@ -97,11 +119,14 @@ export function usePressContextMenu<T>(options: PressContextMenuOptions<T>) {
     pressState.value = null;
   }
 
+  onBeforeUnmount(() => cancelLongPress());
+
   return {
     consumeClick,
     onContextMenu,
     onPointerDown,
     onPointerMove,
     onPointerEnd,
+    onKeyDown,
   };
 }

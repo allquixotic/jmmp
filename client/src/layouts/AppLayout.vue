@@ -63,10 +63,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useSessionStore } from "src/stores/session";
 import { usePlayerStore } from "src/stores/player";
+import { handlePlaybackShortcut } from "src/interactions/playback-shortcut";
 import SideNav from "src/components/SideNav.vue";
 import TabBar from "src/components/TabBar.vue";
 import TransportBar from "src/components/TransportBar.vue";
@@ -80,6 +81,14 @@ const session = useSessionStore();
 const player = usePlayerStore();
 const router = useRouter();
 
+onMounted(() => {
+  document.addEventListener("keydown", onPlaybackKeydown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onPlaybackKeydown);
+});
+
 watch(
   () => session.playerConflict,
   (conflict) => {
@@ -89,6 +98,10 @@ watch(
 
 function takeControl(): void {
   void session.takePlayerControl();
+}
+
+function onPlaybackKeydown(event: KeyboardEvent): void {
+  handlePlaybackShortcut(event, () => void player.toggle());
 }
 
 async function logout(): Promise<void> {

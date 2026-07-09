@@ -15,6 +15,7 @@
       @pointermove="menuTrigger.onPointerMove"
       @pointerup="menuTrigger.onPointerEnd"
       @pointercancel="menuTrigger.onPointerEnd"
+      @keydown="menuTrigger.onKeyDown($event, p)"
     >
       <div :class="effectiveMode === 'list' ? 'playlist-row-art' : 'playlist-art'">
         <q-icon
@@ -82,7 +83,7 @@
     >
       {{ props.emptyLabel ?? "No playlists yet." }}
     </div>
-    <q-menu ref="contextMenu" touch-position>
+    <q-menu ref="contextMenu" touch-position no-parent-event>
       <q-list dense style="min-width: 200px">
         <q-item-label header>{{ menuTarget?.name ?? "Playlist" }}</q-item-label>
         <q-item clickable v-close-popup @click="emitAction('open')">

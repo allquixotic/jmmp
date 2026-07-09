@@ -15,6 +15,7 @@ export interface LibraryMenuContext {
   icon: string;
   playlistLabel: string;
   infoRows: LibraryInfoRow[];
+  open?: () => void;
   loadTracks: () => Promise<Track[]>;
 }
 

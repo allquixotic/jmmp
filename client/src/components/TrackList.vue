@@ -42,7 +42,7 @@
           class="track-row"
           :class="{
             playing: playingTrackId === t.id,
-            selected: isSelected(t.id),
+            selected: isSelected(t),
             'drag-source': isDragSource(i),
             'drop-target': isDropTarget(i),
           }"
@@ -50,7 +50,7 @@
           :data-track-index="i"
           role="button"
           tabindex="0"
-          :aria-selected="selectable ? isSelected(t.id) : undefined"
+          :aria-selected="selectable ? isSelected(t) : undefined"
           @click="onRowClick($event, t, i)"
           @dblclick="onRowDoubleClick(t, i)"
           @contextmenu.prevent="onRowContextMenu($event, t, i)"
@@ -59,7 +59,8 @@
           @pointerup="onRowPointerEnd"
           @pointercancel="onRowPointerEnd"
           @keydown.enter="onRowEnter(t, i)"
-          @keydown.space.prevent="onRowKeySelect($event, t, i)"
+          @keydown="onRowMenuKeyDown($event, t, i)"
+          data-playback-shortcut-surface
         >
           <div v-if="reorderable" class="td td-drag">
             <button
@@ -94,6 +95,17 @@
               <div class="track-title">{{ t.title || "Untitled" }}</div>
               <div class="track-artist">{{ t.artist }}</div>
             </div>
+            <q-btn
+              flat
+              round
+              dense
+              icon="more_vert"
+              class="track-menu-button"
+              :aria-label="`More actions for ${t.title || 'track'}`"
+              @click.stop="openRowMenuFromButton($event, t, i)"
+              @pointerdown.stop
+              @keydown.stop
+            />
           </div>
           <div
             v-for="column in visibleColumns"
@@ -101,15 +113,75 @@
             class="td td-text"
             :class="[`td-${column}`, { mono: isMonoColumn(column) }]"
           >
-            {{ columnValue(t, column) }}
+            <button
+              v-if="linkableColumn(t, column)"
+              class="metadata-link"
+              type="button"
+              @click.stop="onMetadataLink(column, t)"
+            >
+              {{ columnValue(t, column) }}
+            </button>
+            <template v-else>{{ columnValue(t, column) }}</template>
           </div>
         </div>
       </div>
     </div>
 
-    <q-menu ref="rowMenu" touch-position no-parent-event @before-show="ensureMenuData">
-      <q-list dense style="min-width: 230px">
-        <q-item-label header>{{ rowMenuTitle }}</q-item-label>
+    <q-menu
+      ref="rowMenu"
+      touch-position
+      no-parent-event
+      content-class="track-context-menu"
+      @before-show="ensureSources"
+    >
+      <q-list dense class="track-context-menu-list">
+        <q-item-label header class="ellipsis">{{ rowMenuTitle }}</q-item-label>
+        <q-item
+          v-if="rowMenuTrack"
+          clickable
+          v-close-popup
+          @click="playFromMenu"
+        >
+          <q-item-section avatar><q-icon name="play_arrow" /></q-item-section>
+          <q-item-section>Play</q-item-section>
+        </q-item>
+        <q-item clickable v-close-popup :disable="actionBusy" @click="addToQueue">
+          <q-item-section avatar><q-icon name="queue_music" /></q-item-section>
+          <q-item-section>{{ rowMenuQueueLabel }}</q-item-section>
+        </q-item>
+        <q-item clickable v-close-popup @click="playlistPickerOpen = true">
+          <q-item-section avatar><q-icon name="playlist_add" /></q-item-section>
+          <q-item-section>{{ rowMenuPlaylistLabel }}…</q-item-section>
+        </q-item>
+        <q-item
+          v-if="removable"
+          clickable
+          v-close-popup
+          :disable="removeBusy"
+          @click="requestRemove"
+        >
+          <q-item-section avatar><q-icon name="playlist_remove" color="red-5" /></q-item-section>
+          <q-item-section class="text-red-5">{{ rowMenuRemoveLabel }}</q-item-section>
+        </q-item>
+        <q-separator />
+        <q-item
+          v-if="linkMetadata && rowMenuTrack?.artist"
+          clickable
+          v-close-popup
+          @click="viewArtist(rowMenuTrack.artist)"
+        >
+          <q-item-section avatar><q-icon name="person" /></q-item-section>
+          <q-item-section>View Artist</q-item-section>
+        </q-item>
+        <q-item
+          v-if="linkMetadata && rowMenuTrack?.album"
+          clickable
+          v-close-popup
+          @click="viewAlbum(rowMenuTrack)"
+        >
+          <q-item-section avatar><q-icon name="album" /></q-item-section>
+          <q-item-section>View Album</q-item-section>
+        </q-item>
         <q-item
           v-if="rowMenuTrack"
           clickable
@@ -119,29 +191,6 @@
           <q-item-section avatar><q-icon name="info" /></q-item-section>
           <q-item-section>Info</q-item-section>
         </q-item>
-        <q-separator />
-        <q-expansion-item
-          dense
-          default-opened
-          expand-separator
-          icon="playlist_add"
-          :label="rowMenuPlaylistLabel"
-        >
-          <q-list dense>
-            <q-item
-              v-for="playlist in sortedPlaylists"
-              :key="playlist.id"
-              clickable
-              v-close-popup
-              @click="addToPlaylist(rowMenuTrackIds, playlist.id)"
-            >
-              <q-item-section>{{ playlist.name }}</q-item-section>
-            </q-item>
-            <q-item v-if="playlists.loaded && sortedPlaylists.length === 0">
-              <q-item-section class="text-grey-6">No playlists</q-item-section>
-            </q-item>
-          </q-list>
-        </q-expansion-item>
       </q-list>
     </q-menu>
 
@@ -174,6 +223,14 @@
       </q-card>
     </q-dialog>
 
+    <PlaylistPickerDialog
+      v-model="playlistPickerOpen"
+      :title="rowMenuPlaylistLabel"
+      :excluded-playlist-id="currentPlaylistId"
+      :busy="actionBusy"
+      @selected="addToPlaylist"
+    />
+
     <div v-if="tracks.length === 0" class="track-list-empty">
       {{ emptyLabel ?? "No tracks." }}
     </div>
@@ -181,15 +238,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import type { Track } from "@jmmp/shared";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useQuasar } from "quasar";
+import type { Playlist, Track } from "@jmmp/shared";
 import AlbumCover from "./AlbumCover.vue";
+import PlaylistPickerDialog from "./PlaylistPickerDialog.vue";
 import { usePlaylistsStore } from "src/stores/playlists";
+import { useQueueStore } from "src/stores/queue";
 import { useSourcesStore } from "src/stores/sources";
-import {
-  trackActionIds,
-  type SelectionModifiers,
-} from "src/tracks/selection";
+import type { SelectionModifiers } from "src/tracks/selection";
 import {
   DEFAULT_PLAYLIST_COLUMNS,
   type SortDirection,
@@ -202,7 +259,6 @@ import {
   shouldOpenTrackRowContextMenu,
   TRACK_ROW_LONG_PRESS_MS,
 } from "src/tracks/row-interaction";
-import { sortPlaylists } from "src/playlists/sort";
 
 const props = defineProps<{
   tracks: Track[];
@@ -211,23 +267,37 @@ const props = defineProps<{
   reorderable?: boolean;
   selectable?: boolean;
   selectedTrackIds?: number[];
+  selectedTracks?: Track[];
+  selectionScopeTracks?: Track[];
   columns?: TrackColumnKey[];
   sortable?: boolean;
   sortKey?: TrackSortKey | null;
   sortDirection?: SortDirection;
+  linkMetadata?: boolean;
+  removable?: boolean;
+  removeBusy?: boolean;
+  currentPlaylistId?: number;
 }>();
 const emit = defineEmits<{
   play: [track: Track, index: number];
   reorder: [fromIndex: number, toIndex: number];
   select: [track: Track, index: number, modifiers: SelectionModifiers];
   sort: [key: TrackSortKey];
+  viewArtist: [artist: string, track: Track];
+  viewAlbum: [track: Track];
+  remove: [tracks: Track[]];
 }>();
 
+const $q = useQuasar();
 const playlists = usePlaylistsStore();
+const queue = useQueueStore();
 const sources = useSourcesStore();
 const rowMenu = ref<{ show: (evt?: Event) => void } | null>(null);
 const rowMenuTrack = ref<Track | null>(null);
-const rowMenuTrackIds = ref<number[]>([]);
+const rowMenuTrackIndex = ref(-1);
+const rowMenuTracks = ref<Track[]>([]);
+const actionBusy = ref(false);
+const playlistPickerOpen = ref(false);
 const trackInfoOpen = ref(false);
 const infoTrack = ref<Track | null>(null);
 const longPressState = ref<{
@@ -248,8 +318,9 @@ const dragState = ref<{
   handle: HTMLElement;
 } | null>(null);
 const selectedIdSet = computed(() => new Set(props.selectedTrackIds ?? []));
+const selectedOccurrenceSet = computed(() => new Set(props.selectedTracks ?? []));
 const visibleColumns = computed(() => props.columns ?? DEFAULT_PLAYLIST_COLUMNS);
-const sortedPlaylists = computed(() => sortPlaylists(playlists.playlists));
+const rowMenuTrackIds = computed(() => rowMenuTracks.value.map((track) => track.id));
 const rowMenuTitle = computed(() =>
   rowMenuTrackIds.value.length > 1
     ? `${rowMenuTrackIds.value.length} selected tracks`
@@ -257,6 +328,16 @@ const rowMenuTitle = computed(() =>
 );
 const rowMenuPlaylistLabel = computed(() =>
   playlistHeader(rowMenuTrackIds.value.length)
+);
+const rowMenuQueueLabel = computed(() =>
+  rowMenuTrackIds.value.length > 1
+    ? `Add ${rowMenuTrackIds.value.length} tracks to queue`
+    : "Add to queue"
+);
+const rowMenuRemoveLabel = computed(() =>
+  rowMenuTrackIds.value.length > 1
+    ? `Remove ${rowMenuTrackIds.value.length} tracks from playlist`
+    : "Remove from playlist"
 );
 const gridTemplateColumns = computed(() => {
   const cols = [
@@ -309,14 +390,6 @@ watch(
   }
 );
 
-async function ensureMenuData(): Promise<void> {
-  await Promise.all([ensurePlaylists(), ensureSources()]);
-}
-
-async function ensurePlaylists(): Promise<void> {
-  if (!playlists.loaded) await playlists.load();
-}
-
 async function ensureSources(): Promise<void> {
   if (!sources.loaded) await sources.load().catch(() => {});
 }
@@ -325,8 +398,44 @@ async function ensureSourcesForColumns(): Promise<void> {
   if (visibleColumns.value.includes("source")) await ensureSources();
 }
 
-function addToPlaylist(trackIds: number[], playlistId: number): void {
-  void playlists.append(playlistId, trackIds);
+async function addToPlaylist(playlist: Playlist): Promise<void> {
+  const trackIds = rowMenuTrackIds.value;
+  if (trackIds.length === 0) return;
+  actionBusy.value = true;
+  try {
+    await playlists.append(playlist.id, trackIds);
+    playlistPickerOpen.value = false;
+    notifySuccess(`${trackCountLabel(trackIds.length)} added to “${playlist.name}”`);
+  } catch (err) {
+    notifyError(err);
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+async function addToQueue(): Promise<void> {
+  const trackIds = rowMenuTrackIds.value;
+  if (trackIds.length === 0) return;
+  actionBusy.value = true;
+  try {
+    await queue.append(trackIds);
+    notifySuccess(`${trackCountLabel(trackIds.length)} added to the queue`);
+  } catch (err) {
+    notifyError(err);
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+function playFromMenu(): void {
+  const track = rowMenuTrack.value;
+  if (!track || rowMenuTrackIndex.value < 0) return;
+  emit("play", track, rowMenuTrackIndex.value);
+}
+
+function requestRemove(): void {
+  if (rowMenuTracks.value.length === 0) return;
+  emit("remove", [...rowMenuTracks.value]);
 }
 
 function onCoverClick(event: MouseEvent, track: Track, index: number): void {
@@ -358,11 +467,6 @@ function onRowEnter(track: Track, index: number): void {
   emit("play", track, index);
 }
 
-function onRowKeySelect(event: KeyboardEvent, track: Track, index: number): void {
-  if (!props.selectable) return;
-  emit("select", track, index, modifiersFromEvent(event));
-}
-
 function onRowContextMenu(event: MouseEvent, track: Track, index: number): void {
   if (Date.now() < suppressContextMenuUntil.value) return;
   if (!shouldOpenTrackRowContextMenu(event.button, event.ctrlKey)) return;
@@ -371,12 +475,47 @@ function onRowContextMenu(event: MouseEvent, track: Track, index: number): void 
 }
 
 function openRowMenu(event: MouseEvent, track: Track, index: number): void {
-  if (props.selectable && !isSelected(track.id)) {
-    emit("select", track, index, modifiersFromEvent(event));
-  }
-  rowMenuTrack.value = track;
-  rowMenuTrackIds.value = actionTrackIdsFor(track.id);
+  setRowMenuContext(track, index);
   rowMenu.value?.show(event);
+}
+
+function openRowMenuFromButton(event: MouseEvent, track: Track, index: number): void {
+  cancelLongPress();
+  openRowMenu(event, track, index);
+}
+
+function setRowMenuContext(track: Track, index: number): void {
+  const wasSelected = isSelected(track);
+  if (props.selectable && !wasSelected) emit("select", track, index, {});
+  rowMenuTrack.value = track;
+  rowMenuTrackIndex.value = index;
+  rowMenuTracks.value =
+    props.selectable && wasSelected
+      ? (props.selectionScopeTracks ?? props.tracks).filter((candidate) =>
+          isSelected(candidate)
+        )
+      : [track];
+}
+
+function onRowMenuKeyDown(event: KeyboardEvent, track: Track, index: number): void {
+  const isContextMenuKey = event.key === "ContextMenu";
+  const isShiftF10 = event.shiftKey && event.key === "F10";
+  if (!isContextMenuKey && !isShiftF10) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  const row = event.currentTarget;
+  const rect = row instanceof HTMLElement ? row.getBoundingClientRect() : null;
+  openRowMenu(
+    new MouseEvent("contextmenu", {
+      bubbles: true,
+      button: 2,
+      clientX: rect ? rect.left + Math.min(36, rect.width / 2) : 0,
+      clientY: rect ? rect.top + Math.min(28, rect.height / 2) : 0,
+    }),
+    track,
+    index
+  );
 }
 
 function onRowPointerDown(event: PointerEvent, track: Track, index: number): void {
@@ -432,6 +571,8 @@ function cancelLongPress(pointerId?: number): void {
   longPressState.value = null;
 }
 
+onBeforeUnmount(() => cancelLongPress());
+
 function consumeSuppressedClick(trackId: number): boolean {
   if (suppressNextClickTrackId.value !== trackId) return false;
   suppressNextClickTrackId.value = null;
@@ -443,6 +584,28 @@ function showTrackInfo(track: Track): void {
   trackInfoOpen.value = true;
 }
 
+function linkableColumn(track: Track, column: TrackColumnKey): boolean {
+  return Boolean(
+    props.linkMetadata &&
+      ((column === "artist" && track.artist) || (column === "album" && track.album))
+  );
+}
+
+function onMetadataLink(column: TrackColumnKey, track: Track): void {
+  if (column === "artist") viewArtist(track.artist, track);
+  if (column === "album") viewAlbum(track);
+}
+
+function viewArtist(artist: string, track = rowMenuTrack.value): void {
+  if (!artist || !track) return;
+  emit("viewArtist", artist, track);
+}
+
+function viewAlbum(track: Track | null): void {
+  if (!track?.album) return;
+  emit("viewAlbum", track);
+}
+
 function modifiersFromEvent(event: MouseEvent | KeyboardEvent): SelectionModifiers {
   return {
     range: event.shiftKey,
@@ -450,16 +613,29 @@ function modifiersFromEvent(event: MouseEvent | KeyboardEvent): SelectionModifie
   };
 }
 
-function isSelected(trackId: number): boolean {
-  return selectedIdSet.value.has(trackId);
-}
-
-function actionTrackIdsFor(trackId: number): number[] {
-  return trackActionIds(props.selectedTrackIds ?? [], trackId);
+function isSelected(track: Track): boolean {
+  return props.selectedTracks
+    ? selectedOccurrenceSet.value.has(track)
+    : selectedIdSet.value.has(track.id);
 }
 
 function playlistHeader(count: number): string {
   return count > 1 ? `Add ${count} tracks to playlist` : "Add to playlist";
+}
+
+function trackCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "track" : "tracks"}`;
+}
+
+function notifySuccess(message: string): void {
+  $q.notify({ type: "positive", message, timeout: 2200 });
+}
+
+function notifyError(err: unknown): void {
+  $q.notify({
+    type: "negative",
+    message: err instanceof Error ? err.message : String(err),
+  });
 }
 
 function requestSort(key: TrackSortKey): void {
@@ -812,7 +988,31 @@ function formatDuration(ms: number): string {
 }
 
 .track-title-text {
+  flex: 1;
   min-width: 0;
+}
+
+.track-menu-button {
+  color: var(--am-text-muted);
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.track-row:hover .track-menu-button,
+.track-row:focus-within .track-menu-button,
+.track-menu-button:focus-visible {
+  opacity: 1;
+}
+
+.track-menu-button:hover {
+  color: var(--am-text-primary);
+}
+
+@media (hover: none), (max-width: 599px) {
+  .track-menu-button {
+    opacity: 1;
+  }
 }
 
 .track-title {
@@ -841,6 +1041,28 @@ function formatDuration(ms: number): string {
   min-width: 0;
 }
 
+.metadata-link {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-link:hover,
+.metadata-link:focus-visible {
+  color: var(--am-text-primary);
+  text-decoration: underline;
+  outline: none;
+}
+
 .td-duration,
 .td-codec,
 .td-quality {
@@ -858,6 +1080,15 @@ function formatDuration(ms: number): string {
   width: min(560px, calc(100vw - 32px));
   background: #1d2027;
   color: var(--am-text-primary);
+}
+
+:global(.track-context-menu) {
+  width: min(310px, calc(100vw - 24px));
+  max-width: min(310px, calc(100vw - 24px));
+}
+
+.track-context-menu-list {
+  min-width: 260px;
 }
 
 .track-info-title {

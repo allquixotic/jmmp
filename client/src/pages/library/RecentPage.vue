@@ -51,6 +51,13 @@ onMounted(async () => {
 });
 
 function onSelect(a: Album): void {
-  void router.push({ name: "browse", query: { album: a.title, artist: a.artist } });
+  void router.push({
+    name: "album",
+    query: {
+      album: a.title,
+      artist: a.albumArtist || a.artist,
+      source: String(a.sourceId),
+    },
+  });
 }
 </script>

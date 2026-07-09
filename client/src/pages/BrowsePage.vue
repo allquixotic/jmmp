@@ -38,7 +38,14 @@
             </div>
           </div>
         </q-card-section>
-        <TrackList :tracks="tracksForSelected" :playing-track-id="player.current?.id ?? null" @play="playOne" />
+        <TrackList
+          :tracks="tracksForSelected"
+          :playing-track-id="player.current?.id ?? null"
+          link-metadata
+          @play="playOne"
+          @view-artist="openTrackArtist"
+          @view-album="openTrackAlbum"
+        />
       </q-card>
     </q-dialog>
   </q-page>
@@ -92,23 +99,35 @@ async function openAlbum(album: Album): Promise<void> {
   if ($q.screen.lt.md) {
     await router.push({
       name: "album",
-      query: { album: album.title, artist: album.artist, source: String(album.sourceId) },
+      query: {
+        album: album.title,
+        artist: album.albumArtist || album.artist,
+        source: String(album.sourceId),
+      },
     });
     return;
   }
   selected.value = album;
   albumOpen.value = true;
   try {
-    await catalog.loadTracks(album.title, album.artist, album.sourceId);
+    await catalog.loadTracks(
+      album.title,
+      album.albumArtist || album.artist,
+      album.sourceId
+    );
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
 }
 
 const tracksForSelected = computed<Track[]>(() =>
-  selected.value
+      selected.value
     ? (catalog.tracks[
-        catalogKey(selected.value.title, selected.value.sourceId, selected.value.artist)
+        catalogKey(
+          selected.value.title,
+          selected.value.sourceId,
+          selected.value.albumArtist || selected.value.artist
+        )
       ] ?? [])
     : []
 );
@@ -134,6 +153,25 @@ async function shuffleAll(): Promise<void> {
 async function playOne(_t: Track, i: number): Promise<void> {
   const first = await queue.playFromTracks(tracksForSelected.value, i);
   if (first) await player.play(first);
+}
+
+function openTrackArtist(artist: string): void {
+  albumOpen.value = false;
+  if (!artist) return;
+  void router.push({ name: "library-artists", query: { artist } });
+}
+
+function openTrackAlbum(track: Track): void {
+  albumOpen.value = false;
+  if (!track.album) return;
+  void router.push({
+    name: "album",
+    query: {
+      album: track.album,
+      artist: track.albumArtist || track.artist,
+      source: String(track.sourceId),
+    },
+  });
 }
 </script>
 
