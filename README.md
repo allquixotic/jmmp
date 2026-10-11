@@ -158,6 +158,24 @@ five seconds. The encoded backlog stays bounded and does not alter another
 listener's delay or the server's DSP. This is a buffering target, not a promise
 about total network/device latency.
 
+**Resync**, beside **Disconnect** on the listener page, discards that browser's
+saved budget, safety floor, RTT history and underrun count and rebuilds its
+connection with the initial 100 ms budget. Playback and other listeners continue.
+
+At the normal `info` log level, `Audio pipeline` events identify `source_server`,
+`server_helper` and `helper_upstream`. Worker output and native PCM-input gaps over
+100 ms log their phase, generation, track and elapsed gap; warnings appear while
+blocked, repeat at most every five seconds and report recovery. Startup fetch,
+first-byte and seek-decoding waits over one second are marked separately; pause,
+seek, end and idle periods do
+not count as input gaps. Pipe queue/flush delays and Opus encoding failures are
+also logged. Upstream summaries every 30 seconds include RTT, transport bytes,
+packet loss, active subscriptions and expired-content counters. Packet loss and
+expired content produce bounded warnings; they describe transport impairment,
+not a measurement of audio reaching a listener's speakers. Publisher URLs and
+credentials are excluded. Under systemd, inspect these with
+`journalctl -u jmmp.service -f`.
+
 Track selection and seek rearm the audio pipeline on the existing transport.
 Listeners stay connected while idle, at track boundaries, and during temporary
 source failures, then resume when audio returns. Playback status polling supplies

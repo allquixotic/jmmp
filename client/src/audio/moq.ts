@@ -119,6 +119,15 @@ export class MoqPlayer extends EventTarget {
     void this.poll();
     this.renewal = setTimeout(() => this.reconnect(), Math.max(1000, listener.expires * 1000 - Date.now() - 60000));
   }
+  async resync() {
+    this.dispose(); this.latency.reset(); this.resetMonitoring();
+    const mine = this.epoch;
+    this.dispatchEvent(new CustomEvent("error", { detail: null }));
+    this.dispatchEvent(new CustomEvent("state", { detail: "loading" }));
+    this.dispatchEvent(new CustomEvent("latency", { detail: { playoutMs: this.latency.targetMs, underruns: 0, buffering: true } satisfies ListenerLatency }));
+    try { await this.listen(); }
+    catch (error) { if (mine === this.epoch) { this.error(error); this.reconnect(); } }
+  }
   private expectedAudio() { return this.lastStatus?.state === "playing" || this.lastStatus?.state === "buffering"; }
   private resetMonitoring() {
     clearTimeout(this.underrun); this.underrun = undefined; this.heardAudio = false;

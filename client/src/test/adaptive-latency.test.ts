@@ -10,6 +10,20 @@ function smooth(latency: AdaptiveLatency, start: number, end: number) {
   for (let t = start; t <= end; t += 250) { latency.healthy(t); latency.tick(t); }
 }
 
+test("V35 Resync forgets persisted floor, RTT, underruns and old quiet evidence", () => {
+  const saved = storage('{"version":1,"targetMs":3200,"floorMs":3000}');
+  const latency = new AdaptiveLatency(saved);
+  latency.setRtt(2500); latency.underrun(0); smooth(latency, 0, 600000);
+  latency.reset();
+  expect(latency.targetMs).toBe(100); expect(latency.underruns).toBe(0);
+  latency.tick(600250); expect(latency.targetMs).toBe(100);
+  expect(new AdaptiveLatency(saved).targetMs).toBe(100);
+  smooth(latency, 600250, 1200250); expect(latency.targetMs).toBe(95);
+  const blocked = new AdaptiveLatency({ getItem() { throw Error("blocked"); }, setItem() { throw Error("blocked"); } });
+  blocked.underrun(0); expect(() => blocked.reset()).not.toThrow();
+  expect(blocked.targetMs).toBe(100);
+});
+
 test("V33 learned latency and safe floor survive refresh independently per origin", () => {
   const saved = storage(), other = storage();
   const latency = new AdaptiveLatency(saved); latency.boundary(0); latency.underrun(1000);

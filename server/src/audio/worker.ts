@@ -8,12 +8,15 @@ import type { Codec, DspParams } from "@jmmp/shared";
 import { SpotifySourceError } from "../sources/spotify.ts";
 import { loadAdapter } from "../sources/index.ts";
 import { loadOrInitMachineKey } from "../crypto.ts";
+import { GapWatch, type PipelineDiagnostic } from "./diagnostics.ts";
 
 const RATE = 48000, QUANTUM = 960;
 let generation = 0, paused = false, params: DspParams;
 let cancelled: (() => void) | undefined;
 let ack: (() => void) | undefined;
 let dsp: AudioDsp | undefined;
+let outputWatch: GapWatch | undefined;
+let startupWatch: GapWatch | undefined;
 function applyParams() {
   dsp?.handle({ type: "params", pitch: params.pitchSemi, tempo: params.tempoPct,
     rate: params.speedPct, gainDb: params.gainDb });
@@ -27,7 +30,10 @@ self.onmessage = e => {
     paused = !!m.paused; params = m.params;
     void play(m).catch(error => { if (m.generation === generation) self.postMessage({ type: "error", generation, errorCode: error instanceof SpotifySourceError && error.code === "unavailable" ? "spotify_unavailable" : undefined, error: error instanceof Error ? error.stack ?? error.message : String(error) }); });
   } else if (m.type === "params") { params = m.params; applyParams(); }
-  else if (m.type === "pause") paused = m.paused;
+  else if (m.type === "pause") {
+    paused = m.paused; outputWatch?.reset(); startupWatch?.reset();
+    if (!paused) startupWatch?.progress(performance.now());
+  }
 };
 
 async function play(m: { generation: number; dataDir: string; trackId: number; position: number }) {
@@ -37,9 +43,24 @@ async function play(m: { generation: number; dataDir: string; trackId: number; p
   let reader: Pick<ReadableStreamDefaultReader<Uint8Array>, "read" | "cancel"> | undefined;
   cancelled = () => { void reader?.cancel().catch(() => {}); };
   const decoderHolder: { decoder?: Awaited<ReturnType<typeof createDecoder>> } = {};
+  let phase = "source_fetch", sourceId = 0;
+  const diagnostic = (event: PipelineDiagnostic) => {
+    if (mine === generation && !paused) self.postMessage({ type: "diagnostic", generation: mine, diagnostic: { ...event, trackId: m.trackId, sourceId } });
+  };
+  const watch = new GapWatch(diagnostic, () => ({ stage: phase === "pipe_ack" ? "server_helper" : "source_server", phase, generation: mine, bufferedFrames: dsp?.bufferedFrames() ?? 0 }));
+  // Initial fetch, first source bytes and seek decoding can all block before
+  // any PCM exists. Report these as startup waits, not steady-playback gaps.
+  const startup = new GapWatch(diagnostic, () => ({ stage: "source_server", phase, generation: mine, startup: true }), 1000, 0);
+  startupWatch = startup; startup.progress(performance.now());
+  outputWatch = watch;
+  const monitoring = setInterval(() => {
+    if (paused) { watch.reset(); startup.reset(); }
+    else { watch.tick(performance.now()); startup.tick(performance.now()); }
+  }, 50);
   try {
     const track = db.query<{ source_id: number; source_track_id: string; codec: Codec; duration_ms: number }, [number]>("SELECT source_id, source_track_id, codec, duration_ms FROM tracks WHERE id = ?").get(m.trackId);
     if (!track) throw new Error("Track not found");
+    sourceId = track.source_id;
     const key = await loadOrInitMachineKey(m.dataDir);
     const source = await loadAdapter(db, key, track.source_id, m.dataDir);
     if (!source) throw new Error("Source is unavailable on the server");
@@ -76,24 +97,33 @@ async function play(m: { generation: number; dataDir: string; trackId: number; p
         }
         if (eof) break;
         if (!bytes || byteOffset === bytes.length) {
+          phase = "source_read";
           const result = await reader.read();
+          watch.tick(performance.now());
           if (mine !== generation) return;
           if (result.done) { chunks.push(...await decoder.flush()); eof = true; break; }
           bytes = result.value; byteOffset = 0;
         }
         const end = Math.min(bytes.length, byteOffset + 4096);
+        phase = "decode";
         chunks.push(...await decoder.decode(bytes.subarray(byteOffset, end))); byteOffset = end;
+        watch.tick(performance.now());
       }
       if (eof && !chunks.length) engine.handle({ type: "end" });
       if (mine !== generation) break;
+      phase = "dsp";
       const got = engine.process([left, right]);
+      watch.tick(performance.now());
       if (engine.drained) { self.postMessage({ type: "ended", generation: mine, position }); break; }
       if (!got) { await Bun.sleep(5); continue; }
+      phase = "scheduling";
       const wait = next - performance.now(); if (wait > 0) await Bun.sleep(wait);
       if (mine !== generation) break;
       const pcm = new Float32Array(QUANTUM * 2);
       for (let i = 0; i < QUANTUM; i++) { pcm[i * 2] = left[i]! * params.volume; pcm[i * 2 + 1] = right[i]! * params.volume; }
       const acknowledged = new Promise<void>(resolve => { ack = resolve; });
+      if (startupWatch === startup) { startup.progress(performance.now()); startup.reset(); startupWatch = undefined; }
+      watch.progress(performance.now()); phase = "pipe_ack";
       self.postMessage({ type: "pcm", generation: mine, pcm }, [pcm.buffer]);
       await acknowledged; // One frame in flight; pipe backpressure bounds memory.
       position += got / RATE * (1 + params.tempoPct / 100) * (1 + params.speedPct / 100);
@@ -103,6 +133,9 @@ async function play(m: { generation: number; dataDir: string; trackId: number; p
       }
     }
   } finally {
+    clearInterval(monitoring); watch.reset(); startup.reset();
+    if (outputWatch === watch) outputWatch = undefined;
+    if (startupWatch === startup) startupWatch = undefined;
     await reader?.cancel().catch(() => {});
     await decoderHolder.decoder?.destroy(); db.close();
     if (mine === generation) { dsp = undefined; cancelled = undefined; }

@@ -8,6 +8,7 @@ import { build } from "esbuild";
 import { DEFAULT_DSP_PARAMS } from "@jmmp/shared";
 import { initDb } from "../db.ts";
 import { encryptJson, loadOrInitMachineKey } from "../crypto.ts";
+import type { PipelineDiagnostic } from "../audio/diagnostics.ts";
 
 test("V24/V27 packaged Spotify worker produces PCM and preserves useful source error stacks", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "jmmp-packaged-worker-"));
@@ -18,6 +19,7 @@ test("V24/V27 packaged Spotify worker produces PCM and preserves useful source e
   let worker: Worker | undefined;
   try {
     const fixture = Buffer.from(await Bun.file(join(import.meta.dir, "fixtures/tone.flac")).arrayBuffer()).toString("base64");
+    const slowFixture = Buffer.from(await Bun.file(join(import.meta.dir, "fixtures/continuity-one.flac")).arrayBuffer()).toString("base64");
     // Exercise the real Spotify adapter/pipe and shared DSP. This stand-in only
     // replaces Spotify networking; its bytes are decoded with the fixture codec.
     await Bun.write(helperPath, `#!${process.execPath}\nconst reader = Bun.stdin.stream().getReader();
@@ -27,9 +29,14 @@ if (request.operation !== 'stream') process.exit(1);
 if (request.uri === 'spotify:track:6sWHDYs0csV6RS48xBl0tH') {
   console.log(JSON.stringify({kind:'error',code:'unavailable',message:'private-credential'}));process.exit(1);
 }
-const bytes = Buffer.from(${JSON.stringify(fixture)}, 'base64');
+const slow = request.uri === 'spotify:track:7sWHDYs0csV6RS48xBl0tH';
+const bytes = Buffer.from(slow ? ${JSON.stringify(slowFixture)} : ${JSON.stringify(fixture)}, 'base64');
 const header = Buffer.from(JSON.stringify({status:200,size:bytes.length,start:0,end:bytes.length-1})+'\\n');
-await Bun.write(Bun.stdout, Buffer.concat([header, bytes]));\n`);
+if (slow) {
+  const writer = Bun.stdout.writer(); writer.write(header); await writer.flush();
+  await Bun.sleep(1200); writer.write(bytes.subarray(0,32768)); await writer.flush();
+  await Bun.sleep(3000); writer.write(bytes.subarray(32768)); await writer.flush(); await writer.end();
+} else await Bun.write(Bun.stdout, Buffer.concat([header, bytes]));\n`);
     await chmod(helperPath, 0o700);
     await build({ entryPoints: [join(import.meta.dir, "../audio/worker.ts")], outfile: workerPath,
       bundle: true, platform: "node", target: "es2023", format: "esm", external: ["bun:sqlite"],
@@ -39,6 +46,7 @@ await Bun.write(Bun.stdout, Buffer.concat([header, bytes]));\n`);
     db.run("INSERT INTO sources (kind,name,config_json,creds_encrypted,cache_policy) VALUES ('spotify','Fixture',?,?,'none')", [JSON.stringify({kind:"spotify",clientId:"a".repeat(32),uris:[]}), credentials]);
     db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:5sWHDYs0csV6RS48xBl0tH','Fixture','flac',1000)");
     db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:6sWHDYs0csV6RS48xBl0tH','Unavailable','flac',1000)");
+    db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:7sWHDYs0csV6RS48xBl0tH','Delayed source','flac',12000)");
     let frames = 0, peak = 0;
     let timer: ReturnType<typeof setTimeout>;
     try {
@@ -72,6 +80,32 @@ await Bun.write(Bun.stdout, Buffer.concat([header, bytes]));\n`);
     expect(failure).toContain("SpotifySourceError: Spotify track is unavailable");
     expect(failure).toContain("audio-worker.js:");
     expect(failure).not.toContain("private-credential");
+    const diagnostics: PipelineDiagnostic[] = [];
+    await new Promise<void>((resolve, reject) => {
+      let first = true;
+      const timeout = setTimeout(() => reject(Error("Worker did not diagnose/recover the delayed source")), 8000);
+      worker!.onmessage = event => {
+        const message = event.data;
+        if (message.type === "error") { clearTimeout(timeout); reject(Error(message.error)); }
+        if (message.type === "diagnostic") {
+          diagnostics.push(message.diagnostic);
+          if (message.diagnostic.event === "recovered" && message.diagnostic.startup !== true && message.diagnostic.phase === "source_read" &&
+              diagnostics.some(d => d.stage === "source_server" && d.phase === "source_read" && d.startup !== true && d.event === "gap")) {
+            clearTimeout(timeout); resolve();
+          }
+        }
+        if (message.type === "pcm") {
+          // Real worker acknowledgement backpressure must be reported while pending.
+          if (first) { first = false; setTimeout(() => worker?.postMessage({ type: "ack" }), 250); }
+          else worker!.postMessage({ type: "ack" });
+        }
+      };
+      worker!.postMessage({type:"start",dataDir,trackId:3,generation:3,position:0,paused:false,params:DEFAULT_DSP_PARAMS});
+    });
+    expect(diagnostics.some(d => d.stage === "server_helper" && d.phase === "pipe_ack" && d.event === "gap")).toBe(true);
+    expect(diagnostics.some(d => d.stage === "source_server" && d.phase === "source_read" && d.event === "gap" && Number(d.gapMs) > 100)).toBe(true);
+    expect(diagnostics.some(d => d.phase === "source_read" && d.startup === true && d.event === "gap")).toBe(true);
+    expect(diagnostics.every(d => d.generation === 3 && d.trackId === 3 && d.sourceId === 1)).toBe(true);
   } finally {
     worker?.terminate(); db.close();
     await rm(dataDir, {recursive:true,force:true});

@@ -13,7 +13,10 @@
         <p v-else-if="trackError" class="text-negative">{{ trackError }}</p>
         <p v-else>{{ loadingTrack ? 'Loading current track…' : 'Nothing playing right now.' }}</p>
       </section>
-      <q-btn color="primary" :label="listening ? 'Disconnect' : 'Listen'" @click="toggle" />
+      <q-btn color="primary" :disable="resyncing" :label="listening ? 'Disconnect' : 'Listen'" @click="toggle" />
+      <q-btn v-if="listening" class="q-ml-sm" outline color="primary" label="Resync" :loading="resyncing" @click="resync">
+        <q-tooltip>Reset learned buffer and reconnect</q-tooltip>
+      </q-btn>
       <p class="q-mt-md">{{ state }}</p>
       <p v-if="listening" role="status">{{ transport }}<span v-if="audio"> · {{ audio }}</span></p>
       <p v-if="listening && latency" aria-label="Adaptive playback buffer" class="text-grey">
@@ -35,6 +38,7 @@ import { MoqPlayer } from "src/audio/moq";
 import type { ListenerLatency } from "src/audio/adaptive-latency";
 import PageHero from "src/components/PageHero.vue";
 const listening = ref(false), state = ref(""), error = ref("");
+const resyncing = ref(false);
 const transport = ref("Connecting"), audio = ref("");
 const latency = ref<ListenerLatency | null>(null);
 const publicListener = useRoute().meta.publicListener === true;
@@ -74,6 +78,11 @@ async function toggle() {
   if (listening.value) { player.dispose(); listening.value = false; state.value = "Disconnected"; audio.value = ""; transport.value = "Connecting"; latency.value = null; void refreshTrack(); return; }
   error.value = "";
   try { await player.listen(); listening.value = true; } catch (e) { error.value = String(e); }
+}
+async function resync() {
+  if (resyncing.value) return;
+  resyncing.value = true; transport.value = "Connecting"; audio.value = "";
+  try { await player.resync(); } finally { resyncing.value = false; }
 }
 onUnmounted(() => { active = false; clearInterval(polling); pending?.abort(); player.dispose(); });
 </script>

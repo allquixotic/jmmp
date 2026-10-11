@@ -6,6 +6,7 @@ use anyhow::{Context, ensure};
 use bytes::Bytes;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+mod diagnostics;
 mod spotify;
 
 #[derive(Deserialize)]
@@ -80,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
     ready.wait().await?;
     // Outbound only: the managed relay learns the broadcast through this
     // connection and clients never need an address for this server.
+    let stats = moq_net::stats::Registry::new(Default::default());
     let upstream = if let Some(upstream) = config.upstream {
         let mut connect = moq_tokio::connect::Config::default();
         connect.url = Some(
@@ -94,7 +96,11 @@ async fn main() -> anyhow::Result<()> {
                 .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid upstream protocol"))?,
         ];
-        let client = connect.init(Default::default())?;
+        let client = connect.init(Default::default())?.with_stats(
+            stats
+                .tier(moq_net::stats::Tier::new("upstream"))
+                .session(""),
+        );
         let connection = client
             .publish(relay_origin)
             .context("Missing upstream URL")?;
@@ -125,7 +131,50 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let clock = std::time::Instant::now();
+    let pcm_health = std::sync::Arc::new(std::sync::Mutex::new(diagnostics::PcmHealth::default()));
+    let monitoring = async {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let monitor = upstream.as_ref().map(|connection| connection.monitor());
+        let mut health = diagnostics::UpstreamHealth::default();
+        let mut report = moq_net::stats::Report::default();
+        let mut last_transport = None;
+        loop {
+            interval.tick().await;
+            let now = clock.elapsed().as_millis() as u64;
+            let (frames, recent) = {
+                let mut pcm = pcm_health.lock().unwrap();
+                if let Some(event) = pcm.tick(now) {
+                    diagnostics::emit(event);
+                }
+                (pcm.frames, pcm.recent(now))
+            };
+            if last_transport.is_some_and(|last| now.saturating_sub(last) < 1000) {
+                continue;
+            }
+            last_transport = Some(now);
+            if let (Some(monitor), Some(connection)) = (&monitor, &upstream) {
+                stats.report(&mut report);
+                let traffic = report
+                    .traffic
+                    .first()
+                    .map(|entry| entry.publisher.clone())
+                    .unwrap_or_default();
+                for event in health.sample(
+                    now,
+                    connection.epoch(),
+                    monitor.stats(),
+                    &traffic,
+                    frames,
+                    recent,
+                ) {
+                    diagnostics::emit(event);
+                }
+            }
+        }
+    };
     let read = async {
+        let mut last_encode_warning = None;
         loop {
             // 24 bytes: type, generation, byte length, reserved, timestamp µs (LE).
             let mut header = [0u8; 24];
@@ -135,6 +184,7 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => return Err(e.into()),
             }
             let kind = u32::from_le_bytes(header[0..4].try_into()?);
+            let generation = u32::from_le_bytes(header[4..8].try_into()?);
             let len = u32::from_le_bytes(header[8..12].try_into()?) as usize;
             ensure!(
                 len <= 960 * 2 * 4 && len % 8 == 0,
@@ -147,18 +197,39 @@ async fn main() -> anyhow::Result<()> {
                 .context("truncated PCM frame")?;
             match kind {
                 0 => {
+                    for event in pcm_health
+                        .lock()
+                        .unwrap()
+                        .progress(clock.elapsed().as_millis() as u64, generation)
+                    {
+                        diagnostics::emit(event);
+                    }
                     ensure!(len > 0, "empty PCM frame");
                     ensure!(
                         data.chunks_exact(4)
                             .all(|v| f32::from_le_bytes(v.try_into().unwrap()).is_finite()),
                         "non-finite PCM"
                     );
-                    audio.write(&moq_audio::Frame::new(
+                    let encoding = std::time::Instant::now();
+                    let result = audio.write(&moq_audio::Frame::new(
                         Bytes::from(data),
                         moq_net::Timestamp::from_micros(clock.elapsed().as_micros() as u64)?,
-                    ))?;
+                    ));
+                    let now = clock.elapsed().as_millis() as u64;
+                    if result.is_err()
+                        || encoding.elapsed().as_millis() > 100
+                            && last_encode_warning
+                                .is_none_or(|last| now.saturating_sub(last) >= 5000)
+                    {
+                        last_encode_warning = Some(now);
+                        diagnostics::emit(
+                            serde_json::json!({"stage":"server_helper", "eventType":if result.is_err() {"encode_failed"} else {"encode_slow"}, "phase":"encode", "generation":generation, "durationMs":encoding.elapsed().as_millis() as u64}),
+                        );
+                    }
+                    result?;
                 }
                 1 => {
+                    pcm_health.lock().unwrap().reset();
                     ensure!(len == 0, "cut has payload");
                     audio.discontinuity()?;
                 }
@@ -172,15 +243,22 @@ async fn main() -> anyhow::Result<()> {
         Ok::<(), anyhow::Error>(())
     };
     let result = tokio::select! {
+        _ = monitoring => Err(anyhow::anyhow!("Pipeline monitor stopped")),
         result = read => result,
         result = refresh => result,
-        result = &mut running => return result.context("relay task")?,
+        result = &mut running => {
+            diagnostics::emit(serde_json::json!({"stage":"server_helper", "eventType":"relay_failed", "phase":"transport"}));
+            return result.context("relay task")?;
+        },
         _ = async {
             match &upstream {
                 Some(connection) => { let _ = connection.closed().await; }
                 None => std::future::pending::<()>().await,
             }
-        } => Err(anyhow::anyhow!("Upstream MoQ connection stopped")),
+        } => {
+            diagnostics::emit(serde_json::json!({"stage":"helper_upstream", "eventType":"closed", "phase":"transport"}));
+            Err(anyhow::anyhow!("Upstream MoQ connection stopped"))
+        },
     };
     drop(audio);
     drop(catalog);

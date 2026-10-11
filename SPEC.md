@@ -65,6 +65,9 @@ V32: Each listener independently measures rendered underruns with RTT floor; bou
 V33: Versioned, bounded per-origin localStorage retains learned receiver delay and failed-budget floor across refresh; invalid/blocked storage never interrupts playback; quiet evidence restarts after refresh.
 V34: Delay decreases require ten uninterrupted minutes of healthy rendering, then at most 5ms/minute above failed-budget safety floor; recovered short gaps restart quiet evidence; one continuous stall counts once; refills never feed estimator; persistent stopped render clock rebuilds full receiver automatically without a Listen click.
 
+V35: Listener Resync clears saved delay, failed-budget floor, RTT and quiet evidence, cancels stale receiver work and reconnects at initial budget; owner playback and other listeners continue unchanged.
+V36: Structured service logs identify source/worker, server/helper and helper/upstream gaps, their duration and recovery; deliberate pause/seek/EOF excluded; stalled operations log before returning; native stdout continuously drained; upstream loss/stale-content counters distinct from confirmed receiver underruns; credentials never logged.
+
 ## §T TASKS
 id|status|task|cites
 --|--|--|--
@@ -90,6 +93,7 @@ T18|x|saved-account live Spotify search|V10,V13,V29,I.spotify
 T19|x|shared resizable/hideable table columns with persisted browser preferences|V10,V30
 T20|x|repair listener discontinuity recovery and add per-client adaptive playout; verify, push and deploy|V9,V10,V31,V32,I.public,I.playback
 T21|x|persist learned delay, stabilize adaptive probes and automatically recover stuck receivers; verify, push and deploy|V10,V33,V34,I.public
+T22|x|listener Resync and pipeline dropout diagnostics; verify, push and deploy|V10,V12,V35,V36,I.public,I.helper,I.upstream
 
 ## §B BUGS
 id|date|cause|fix
@@ -144,3 +148,5 @@ B46|2026-10-11|Short browser fixture reaches EOF before slower learning checks; 
 B47|2026-10-11|Route-fulfilled isolated browser document lacks local address space; Chromium blocks fixture relay access|Grant local-network permission only in isolated localhost test context (V10,V34)
 B48|2026-10-11|Merged buffered ranges include decode pacing/reconnect backlog; apparent arrival jitter raises 1875ms to 4025ms after only one underrun|Use actual render-clock loss and RTT floor; high-delay recovery regression asserts one increase per continuous gap (V32,V34)
 B49|2026-10-11|Jitter regression requires guessed delay despite continuous output; pre-reconnect render count can mask failed recovery|Assert growth plus seamless subsequent pauses; require fresh rendered output after replacement connection (V32,V34)
+B50|2026-10-11|Helper stdout stops draining at ready; worker and pipe waits have no live diagnostics; upstream only reports terminal failure|Continuous bounded diagnostic stream, stage-specific gap/recovery events and upstream transport/stale-content summaries (V36)
+B51|2026-10-11|Worker regression treats startup recovery as later streaming-gap recovery and exits before pipe test|Match steady-playback recovery phase and startup flag before asserting all stages (V36)

@@ -357,7 +357,7 @@ test("V32 jittery and stable listeners choose independent buffers and keep rende
   }
 });
 
-test("V33/V34 restored multi-second buffers render and blackholed receivers recover automatically", async ({ page, context, browser }) => {
+test("V33/V34/V35 restored buffers recover from blackholes and Resync rebuilds a clean receiver", async ({ page, context, browser }) => {
   test.setTimeout(90000);
   await authenticate(context);
   const headers = { "X-jmmp-Client": "1" };
@@ -434,6 +434,20 @@ test("V33/V34 restored multi-second buffers render and blackholed receivers reco
       expect(await receiver.client.evaluate(() => (window as any).__moqAudio.rendered)).toBeGreaterThan(snapshots[index]!.rendered + 10);
       expect(receiver.errors).toEqual([]);
     }
+    const beforeResync = (await (await page.request.get(fixture.url + "/api/playback")).json()).data;
+    await Promise.all(clients.map(async receiver => {
+      const connections = receiver.connections();
+      await receiver.client.getByRole("button", { name: "Resync", exact: true }).click();
+      await expect.poll(() => receiver.connections()).toBeGreaterThan(connections);
+      const afterReconnect = await receiver.client.evaluate(() => (window as any).__moqAudio.rendered);
+      await expect.poll(() => receiver.client.evaluate(() => (window as any).__moqAudio.rendered), { timeout: 10000 }).toBeGreaterThan(afterReconnect + 10);
+      expect(await receiver.client.evaluate(key => JSON.parse(localStorage.getItem(key)!), LATENCY_STORAGE_KEY)).toEqual({ version: 1, targetMs: 100, floorMs: 25 });
+      await expect(receiver.client.getByRole("button", { name: "Disconnect", exact: true })).toBeEnabled();
+      expect(receiver.errors).toEqual([]);
+    }));
+    const afterResync = (await (await page.request.get(fixture.url + "/api/playback")).json()).data;
+    expect(afterResync.generation).toBe(beforeResync.generation);
+    expect(afterResync.state).toBe("playing");
   } finally {
     await test.info().attach("recovery-clients", { body: JSON.stringify(await Promise.all(clients.map(async receiver => ({
       shared: receiver.shared, connections: receiver.connections(), errors: receiver.errors,

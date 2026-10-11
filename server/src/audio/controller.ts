@@ -5,7 +5,9 @@ import { DEFAULT_DSP_PARAMS, DEFAULT_MOQ_SETTINGS, validateDspParams, validateMo
   type MoqSettings, type PlaybackCommand, type PlaybackStatus, type MoqListener, type NowPlayingTrack } from "@jmmp/shared";
 import type { AppCtx } from "../router.ts";
 import type { ActiveSession } from "../session.ts";
-import { NativeOutput } from "./helper.ts";
+import { NativeOutput, redactMoqDiagnostics } from "./helper.ts";
+import { logPipeline, type PipelineStage } from "./diagnostics.ts";
+import { log } from "../log.ts";
 
 export class PlaybackController {
   settings = { ...DEFAULT_MOQ_SETTINGS };
@@ -134,7 +136,8 @@ export class PlaybackController {
     }});
     const helper = this.helper = new NativeOutput();
     this.status.instanceId = crypto.randomUUID();
-    helper.onFailure = error => this.fail(error);
+    helper.onFailure = error => this.fail(error, undefined, "server_helper");
+    helper.onDiagnostic = diagnostic => logPipeline({ ...diagnostic, trackId: this.status.trackId ?? undefined });
     try {
       const cfg = this.ctx.cfg.moqUpstream;
       let upstream: { url: string; protocol: string } | undefined;
@@ -148,10 +151,12 @@ export class PlaybackController {
     }
     catch (error) { await this.shutdown(); throw error; }
   }
-  private fail(error: string, errorCode?: PlaybackStatus["errorCode"]) {
+  private fail(error: string, errorCode?: PlaybackStatus["errorCode"], stage: PipelineStage = "source_server") {
+    log.error("Audio pipeline failure", { stage, generation: this.status.generation, trackId: this.status.trackId, errorCode, error: redactMoqDiagnostics(error) });
     this.status.errorCode = errorCode;
     this.error = error; this.status.error = error; this.status.state = "error"; this.status.revision++; this.status.generation++;
     this.worker?.terminate(); this.worker = undefined;
+    void this.helper?.write(1, this.status.generation).catch(() => {});
   }
   command(command: PlaybackCommand, session: ActiveSession, revision?: number) {
     return this.exclusive(async () => {
@@ -196,9 +201,10 @@ export class PlaybackController {
       if (m.generation !== this.status.generation) return;
       if (m.type === "pcm") {
         if (this.status.state === "paused") { worker.postMessage({ type: "ack" }); return; }
-        void this.helper!.write(0, generation, m.pcm).then(() => worker.postMessage({ type: "ack" })).catch(error => { if (generation === this.status.generation) this.fail(String(error)); });
+        void this.helper!.write(0, generation, m.pcm).then(() => worker.postMessage({ type: "ack" })).catch(error => { if (generation === this.status.generation) this.fail(String(error), undefined, "server_helper"); });
         if (this.status.state === "buffering") this.status.state = "playing";
-      } else if (m.type === "position") { this.status.position = m.position; if (m.duration) this.status.duration = m.duration; }
+      } else if (m.type === "diagnostic") logPipeline(m.diagnostic);
+      else if (m.type === "position") { this.status.position = m.position; if (m.duration) this.status.duration = m.duration; }
       else if (m.type === "ended") { this.status.position = m.position; this.status.state = "ended"; this.status.revision++; void this.helper?.write(1, generation).catch(error => { if (generation === this.status.generation) this.fail(String(error)); }); }
       else if (m.type === "error") this.fail(m.error, m.errorCode === "spotify_unavailable" ? m.errorCode : undefined);
     };

@@ -27,6 +27,11 @@ export class AdaptiveLatency {
       this.targetMs = targetMs; this.floorMs = floorMs;
     } catch { /* Storage unavailable, malformed or blocked: use the initial prior. */ }
   }
+  reset() {
+    this.targetMs = 100; this.underruns = 0; this.floorMs = 25; this.minRtt = 0;
+    this.quietSince = undefined; this.lastHealthy = -Infinity; this.lastDecrease = -Infinity;
+    this.save();
+  }
   /** Intentional silence, seek and track changes are not network jitter. */
   boundary(now: number) {
     this.disturbed(now);

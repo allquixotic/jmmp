@@ -3,6 +3,7 @@
 import { X509Certificate } from "node:crypto";
 import type { MoqSettings } from "@jmmp/shared";
 import { audioAssets } from "./runtime.ts";
+import { GapWatch, readHelperEvents, type PipelineDiagnostic } from "./diagnostics.ts";
 export function redactMoqDiagnostics(value: string): string {
   return value.replace(/(?:https?|wss?):\/\/[^\s]+/g, "[relay URL]").replace(/eyJ[A-Za-z0-9_.-]+/g, "[credential]");
 }
@@ -15,6 +16,7 @@ export class NativeOutput {
   alive = false;
   bind = "";
   onFailure: (error: string) => void = () => {};
+  onDiagnostic: (event: PipelineDiagnostic) => void = () => {};
   async start(settings: MoqSettings, dataDir: string, authUrl: string, upstream?: { url: string; protocol: string }): Promise<void> {
     this.bind = settings.bind;
     const assets = await audioAssets(dataDir); this.workerPath = assets.worker;
@@ -32,16 +34,15 @@ export class NativeOutput {
     child.stdin.write(JSON.stringify({ relay, bitrate: settings.bitrate, name: this.name, upstream }) + "\n"); await child.stdin.flush();
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
     try {
+      let resolveReady!: () => void, rejectReady!: (error: Error) => void;
+      const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+      // Keep draining the same reader after ready, including subsequent lines
+      // in that chunk. A full stdout pipe must never stall audio publication.
+      void readHelperEvents(child.stdout, resolveReady, event => this.onDiagnostic(event))
+        .then(() => rejectReady(new Error(`MoQ helper exited: ${safeError()}`)))
+        .catch(() => rejectReady(new Error("MoQ helper diagnostic stream failed")));
       await Promise.race([
-        (async () => {
-          let pending = "";
-          for await (const bytes of child.stdout) {
-            pending += new TextDecoder().decode(bytes);
-            const end = pending.indexOf("\n");
-            if (end >= 0 && JSON.parse(pending.slice(0, end)).event === "ready") return;
-          }
-          throw new Error(`MoQ helper exited: ${safeError()}`);
-        })(),
+        ready,
         new Promise<never>((_, reject) => { startupTimer = setTimeout(() => reject(new Error("MoQ helper startup timed out")), 30000);  }),
       ]);
       clearTimeout(startupTimer); this.alive = true;
@@ -54,13 +55,19 @@ export class NativeOutput {
     } catch (error) { clearTimeout(startupTimer); await this.close(); throw error; }
   }
   write(kind: number, generation: number, pcm?: Float32Array): Promise<void> {
+    let phase = "pipe_queue";
+    const watch = new GapWatch(event => this.onDiagnostic(event), () => ({ stage: "server_helper", phase, generation, bytes: pcm?.byteLength ?? 0 }), 100, 0);
+    if (kind === 0) watch.progress(performance.now());
+    const monitoring = kind === 0 ? setInterval(() => watch.tick(performance.now()), 50) : undefined;
     const operation = this.writing.then(async () => {
+      phase = "pipe_flush";
       const child = this.child; if (!child || !this.alive) throw new Error("MoQ relay is unavailable");
       const header = new Uint8Array(24), view = new DataView(header.buffer);
       view.setUint32(0, kind, true); view.setUint32(4, generation, true); view.setUint32(8, pcm?.byteLength ?? 0, true);
       child.stdin.write(header); if (pcm) child.stdin.write(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
       await child.stdin.flush();
-    });
+      watch.progress(performance.now());
+    }).finally(() => { clearInterval(monitoring); watch.reset(); });
     this.writing = operation.catch(() => {}); return operation;
   }
   async close(): Promise<void> {
