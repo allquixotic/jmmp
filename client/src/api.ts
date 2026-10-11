@@ -34,7 +34,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     method,
     credentials: "include",
     headers,
-    signal: opts.signal,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   };
 
   if (opts.body !== undefined) {

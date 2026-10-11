@@ -155,7 +155,6 @@ const props = withDefaults(
     busy?: boolean;
   }>(),
   {
-    title: undefined,
     excludedPlaylistId: null,
     busy: false,
   }

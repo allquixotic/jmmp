@@ -3,5 +3,6 @@
 import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./", testMatch: "moq.pw.ts", workers: 1, timeout: 60000,
+  outputDir: process.env.JMMP_E2E_EXECUTABLE ? "../test-results/moq-compiled" : "../test-results/moq",
   reporter: [["list"]], use: { ...devices["Desktop Chrome"], serviceWorkers: "block", trace: "retain-on-failure" },
 });

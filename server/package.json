@@ -19,10 +19,10 @@
     "@jmmp/shared": "workspace:*",
     "@moq/hang": "0.5.2",
     "@moq/net": "0.4.2",
-    "@simplewebauthn/server": "^13.3.0",
-    "jose": "^5.9.0"
+    "@simplewebauthn/server": "^14.0.3",
+    "jose": "^6.2.12"
   },
   "devDependencies": {
-    "@types/bun": "^1.1.0"
+    "@types/bun": "^1.4.2"
   }
 }

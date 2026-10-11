@@ -15,8 +15,8 @@ function track(rg: { track?: number; album?: number }): Track {
     album: "x",
     durationMs: 0,
     codec: "mp3",
-    rgTrackDb: rg.track,
-    rgAlbumDb: rg.album,
+    ...(rg.track !== undefined ? { rgTrackDb: rg.track } : {}),
+    ...(rg.album !== undefined ? { rgAlbumDb: rg.album } : {}),
   };
 }
 

@@ -226,7 +226,7 @@
     <PlaylistPickerDialog
       v-model="playlistPickerOpen"
       :title="rowMenuPlaylistLabel"
-      :excluded-playlist-id="currentPlaylistId"
+      :excluded-playlist-id="currentPlaylistId ?? null"
       :busy="actionBusy"
       @selected="addToPlaylist"
     />
@@ -474,12 +474,12 @@ function onRowContextMenu(event: MouseEvent, track: Track, index: number): void 
   openRowMenu(event, track, index);
 }
 
-function openRowMenu(event: MouseEvent, track: Track, index: number): void {
+function openRowMenu(event: Event, track: Track, index: number): void {
   setRowMenuContext(track, index);
   rowMenu.value?.show(event);
 }
 
-function openRowMenuFromButton(event: MouseEvent, track: Track, index: number): void {
+function openRowMenuFromButton(event: Event, track: Track, index: number): void {
   cancelLongPress();
   openRowMenu(event, track, index);
 }

@@ -1,14 +1,15 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
-import { defineConfig } from "#q-app/wrappers";
+import { defineConfig } from "#q-app";
 
-export default defineConfig(() => ({
+export default defineConfig((ctx) => ({
   boot: ["api", "session"],
   css: ["app.scss"],
   extras: ["material-icons", "material-symbols-rounded"],
   build: {
-    target: { browser: ["es2023"], node: "node20" },
+    target: { browser: ["es2023"], node: "node22" },
+    alias: { src: ctx.appPaths.srcDir },
     typescript: { strict: true, vueShim: true },
     vueRouterMode: "history",
   },
@@ -27,20 +28,24 @@ export default defineConfig(() => ({
     plugins: ["Notify", "Dialog", "LocalStorage", "AppFullscreen"],
   },
   animations: [],
+  sourceFiles: {
+    pwaRegisterServiceWorker: "src-pwa/register-service-worker",
+    pwaServiceWorker: "src-pwa/custom-service-worker",
+  },
   ssr: { prodPort: 3000, middlewares: [], pwa: false },
   pwa: {
     workboxMode: "GenerateSW",
-    injectPwaMetaTags: true,
+    injectPWAMetaTags: true,
     swFilename: "sw.js",
     manifestFilename: "manifest.json",
     useCredentialsForManifestTag: false,
-    extendGenerateSWOptions(options) {
+    extendPWAGenerateSWOptions(options) {
       options.navigateFallbackDenylist = [
         ...(options.navigateFallbackDenylist ?? []),
         /^\/api\//,
       ];
     },
-    extendManifestJson(json: Record<string, unknown>) {
+    extendPWAManifestJson(json) {
       json["name"] = "jmmp";
       json["short_name"] = "jmmp";
       json["display"] = "standalone";

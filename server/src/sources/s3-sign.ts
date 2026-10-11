@@ -17,7 +17,7 @@ interface SignParams {
 const EMPTY_PAYLOAD_HASH =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-async function hmac(key: ArrayBuffer | Uint8Array, data: string): Promise<Uint8Array> {
+async function hmac(key: ArrayBuffer | Uint8Array<ArrayBuffer>, data: string): Promise<Uint8Array<ArrayBuffer>> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,

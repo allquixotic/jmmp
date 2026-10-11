@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { useSourcesStore } from "src/stores/sources";
 
 const props = defineProps<{ modelValue: boolean }>();
@@ -68,7 +68,7 @@ async function onSubmit(): Promise<void> {
         endpoint: endpoint.value,
         region: region.value,
         bucket: bucket.value,
-        prefix: prefix.value || undefined,
+        ...(prefix.value ? { prefix: prefix.value } : {}),
         pathStyle: pathStyle.value,
       },
       secrets: {
@@ -85,8 +85,4 @@ async function onSubmit(): Promise<void> {
     working.value = false;
   }
 }
-</script>
-
-<script lang="ts">
-import { watch } from "vue";
 </script>

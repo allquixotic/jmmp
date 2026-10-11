@@ -1,5 +1,5 @@
 {
-  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "extends": "./.quasar/tsconfig.json",
   "compilerOptions": {
     "target": "ES2023",
     "module": "ESNext",
@@ -11,18 +11,16 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["quasar", "node"],
-    "baseUrl": ".",
-    "paths": {
-      "src/*": ["src/*"],
-      "@jmmp/shared": ["../shared/src/index.ts"],
-      "@jmmp/shared/*": ["../shared/src/*"]
-    }
+    "allowImportingTsExtensions": true,
+    "types": ["@quasar/app-vite/client", "wicg-file-system-access"]
   },
   "include": [
+    ".quasar/**/*.d.ts",
     "src/**/*.ts",
     "src/**/*.vue",
     "src-pwa/**/*.ts",
+    "src-pwa/**/*.d.ts",
     "quasar.config.ts"
-  ]
+  ],
+  "exclude": ["src/test", "src-pwa/custom-service-worker.ts"]
 }

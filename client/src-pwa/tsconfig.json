@@ -1,7 +1,8 @@
 {
-  "extends": "../tsconfig.json",
+  "extends": "../.quasar/tsconfig.pwa-sw.json",
   "compilerOptions": {
-    "lib": ["WebWorker", "ESNext"]
+    "lib": ["WebWorker", "ESNext"],
+    "types": ["@quasar/app-vite/client"]
   },
-  "include": ["*.ts", "*.d.ts"]
+  "include": ["../.quasar/*.d.ts", "custom-service-worker.ts"]
 }

@@ -13,19 +13,23 @@
   "workspaces": [
     "shared",
     "server",
-    "client"
+    "client",
+    "client/src-pwa"
   ],
   "scripts": {
     "dev": "concurrently -n server,client -c blue,green 'bun --cwd=server run dev' 'bun --cwd=client run dev'",
     "test": "bun --cwd=server run test && bun --cwd=client run test",
+    "typecheck": "bun build/typecheck.ts",
     "build": "bun build/build.ts",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "e2e:moq": "bun run build && playwright test -c e2e/moq.config.ts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.50.0",
-    "concurrently": "^9.1.0",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^26.6.5",
+    "@playwright/test": "^1.64.0",
+    "concurrently": "^10.0.6",
     "esbuild": "0.28.2",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   }
 }

@@ -22,9 +22,9 @@ import { computed, ref, watch } from "vue";
 import { artUrl } from "src/storage/art-cache";
 
 const props = defineProps<{
-  hash?: string | null;
+  hash?: string | null | undefined;
   alt?: string;
-  size?: number;
+  size?: number | undefined;
 }>();
 
 const src = ref<string | null>(null);

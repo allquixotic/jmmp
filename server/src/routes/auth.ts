@@ -9,7 +9,7 @@ import {
   verifyAuthenticationResponse,
 } from "@simplewebauthn/server";
 import type {
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
 } from "@simplewebauthn/server";
@@ -183,7 +183,7 @@ get("/api/auth/passkey/register/options", async (req: Req) => {
     excludeCredentials: passkeys.map((p) => ({
       id: bytesToBase64Url(p.credential_id),
       transports: (p.transports
-        ? (JSON.parse(p.transports) as AuthenticatorTransportFuture[])
+        ? (JSON.parse(p.transports) as AuthenticatorTransport[])
         : undefined),
     })),
   });
@@ -257,7 +257,7 @@ get("/api/auth/passkey/auth/options", async (req: Req) => {
     allowCredentials: passkeys.map((p) => ({
       id: bytesToBase64Url(p.credential_id),
       transports: (p.transports
-        ? (JSON.parse(p.transports) as AuthenticatorTransportFuture[])
+        ? (JSON.parse(p.transports) as AuthenticatorTransport[])
         : undefined),
     })),
     userVerification: "preferred",
@@ -291,10 +291,10 @@ post("/api/auth/passkey/auth/verify", async (req: Req) => {
     expectedRPID: req.ctx.cfg.webauthn.rpId,
     credential: {
       id: bytesToBase64Url(passkey.credential_id),
-      publicKey: passkey.public_key,
+      publicKey: new Uint8Array(passkey.public_key),
       counter: passkey.counter,
       transports: passkey.transports
-        ? (JSON.parse(passkey.transports) as AuthenticatorTransportFuture[])
+        ? (JSON.parse(passkey.transports) as AuthenticatorTransport[])
         : undefined,
     },
     requireUserVerification: false,

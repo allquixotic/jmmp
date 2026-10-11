@@ -45,9 +45,9 @@ function mimeFor(path: string): string {
   return MIME[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
-const decodeCache = new Map<string, Uint8Array>();
+const decodeCache = new Map<string, Uint8Array<ArrayBuffer>>();
 
-function decodeEmbedded(path: string): Uint8Array | null {
+function decodeEmbedded(path: string): Uint8Array<ArrayBuffer> | null {
   const cached = decodeCache.get(path);
   if (cached) return cached;
   const b64 = SPA_FILES[path];

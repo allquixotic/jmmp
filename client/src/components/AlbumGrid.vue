@@ -134,8 +134,8 @@ function albumInfoRows(album: Album): LibraryInfoRow[] {
   return [
     { label: "Type", value: "Album" },
     { label: "Artist", value: album.artist },
-    { label: "Album artist", value: album.albumArtist },
-    { label: "Year", value: album.year },
+    { label: "Album artist", value: album.albumArtist ?? null },
+    { label: "Year", value: album.year ?? null },
     { label: "Source", value: sourceName(album.sourceId) },
   ];
 }

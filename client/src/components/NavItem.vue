@@ -34,7 +34,7 @@ defineProps<{
   to: RouteLocationRaw;
   icon: string;
   label: string;
-  trailingIcon?: string;
+  trailingIcon?: string | undefined;
 }>();
 </script>
 

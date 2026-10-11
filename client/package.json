@@ -8,6 +8,7 @@
     "dev": "quasar dev -m pwa",
     "build": "quasar build -m pwa",
     "lint": "quasar build -m pwa",
+    "postinstall": "quasar prepare --silent",
     "test": "bun test"
   },
   "dependencies": {
@@ -15,31 +16,25 @@
     "@moq/hang": "0.5.2",
     "@moq/net": "0.4.2",
     "@moq/watch": "0.6.2",
-    "@quasar/extras": "^1.16.12",
-    "@simplewebauthn/browser": "^13.3.0",
-    "@wasm-audio-decoders/flac": "^0.2.10",
+    "@quasar/extras": "^2.1.0",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@wasm-audio-decoders/flac": "^0.2.11",
     "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
     "mpg123-decoder": "^1.0.3",
-    "ogg-opus-decoder": "^1.7.3",
-    "pinia": "^2.2.0",
-    "quasar": "2.19.3",
-    "register-service-worker": "^1.7.2",
+    "ogg-opus-decoder": "^1.7.5",
+    "pinia": "^4.0.3",
+    "quasar": "2.35.0",
     "soundtouchjs": "^0.3.0",
-    "vue": "^3.5.0",
-    "vue-router": "^4.4.0"
+    "vue": "^3.5.43",
+    "vue-router": "^5.4.0"
   },
   "devDependencies": {
-    "@quasar/app-vite": "^2.6.0",
-    "@types/node": "^25.9.1",
-    "@vue/tsconfig": "^0.7.0",
-    "autoprefixer": "^10.4.20",
-    "vue-tsc": "^2.1.10",
-    "workbox-build": "^7.0.0",
-    "workbox-cacheable-response": "^7.0.0",
-    "workbox-core": "^7.0.0",
-    "workbox-expiration": "^7.0.0",
-    "workbox-precaching": "^7.0.0",
-    "workbox-routing": "^7.0.0",
-    "workbox-strategies": "^7.0.0"
+    "@quasar/app-vite": "^3.10.2",
+    "@types/node": "^26.6.5",
+    "@types/wicg-file-system-access": "^2023.10.7",
+    "@vue/tsconfig": "^0.9.1",
+    "autoprefixer": "^10.6.1",
+    "vue-tsc": "^3.3.13",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }

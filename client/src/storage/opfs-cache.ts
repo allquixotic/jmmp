@@ -103,7 +103,7 @@ export async function storeStream(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
-      await writable.write(value);
+      await writable.write(new Uint8Array(value));
       bytes += value.byteLength;
     }
     await writable.close();

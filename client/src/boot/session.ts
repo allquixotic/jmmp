@@ -1,7 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
-import { defineBoot } from "#q-app/wrappers";
+import { defineBoot } from "#q-app";
 import { useSessionStore } from "src/stores/session";
 
 export default defineBoot(async ({ store }) => {

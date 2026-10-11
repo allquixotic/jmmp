@@ -7,6 +7,7 @@ export default defineConfig({
   testDir: "./",
   testMatch: "*.pw.ts",
   testIgnore: "moq.pw.ts",
+  outputDir: "../test-results/standard",
   fullyParallel: false,
   retries: 0,
   workers: 1,

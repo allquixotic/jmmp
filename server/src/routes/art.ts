@@ -12,7 +12,7 @@ get("/api/art/:hash", async (req: Req) => {
   if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) return fail("bad art hash", 400);
   const row = getArtBlob(req.ctx.db, hash.toLowerCase());
   if (!row) return new Response("not found", { status: 404 });
-  return new Response(row.data, {
+  return new Response(new Uint8Array(row.data), {
     headers: {
       "Content-Type": row.mime,
       "Cache-Control": "private, max-age=31536000, immutable",

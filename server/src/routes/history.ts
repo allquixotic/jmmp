@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HistoryResponse, Track } from "@jmmp/shared";
+import type { SQLQueryBindings } from "bun:sqlite";
 import { fail, get, ok, post, readJson, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
 
@@ -44,7 +45,7 @@ get("/api/history", async (req: Req) => {
   const cursor = parseInt(req.url.searchParams.get("cursor") ?? "", 10);
 
   const condition = Number.isFinite(cursor) ? "AND h.id < ?" : "";
-  const params: unknown[] = Number.isFinite(cursor) ? [cursor, limit] : [limit];
+  const params: SQLQueryBindings[] = Number.isFinite(cursor) ? [cursor, limit] : [limit];
 
   const rows = req.ctx.db
     .query<HistoryRow, typeof params>(

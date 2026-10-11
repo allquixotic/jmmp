@@ -38,7 +38,7 @@ describe("service worker update handling", () => {
     const messages: unknown[] = [];
     requestWaitingWorkerActivation({
       waiting: { postMessage: (message: unknown) => messages.push(message) },
-    } as ServiceWorkerRegistration);
+    });
 
     expect(messages).toEqual([{ type: "SKIP_WAITING" }]);
   });

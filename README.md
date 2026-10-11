@@ -25,6 +25,7 @@ The server stores state in sqlite and uses passkeys for authentication.
 ## Requirements
 
 - Bun 1.4 or newer.
+- Node.js 22.22+, 24, 26, 28, or 30 for Quasar's client build tooling.
 - Rust 1.95 or newer and a native compiler toolchain when building jmmp, or
   when first enabling MoQ from a source checkout. Packaged executables include
   the helper and worker; their users need no Rust installation.
@@ -164,6 +165,16 @@ linker for cross compilation. The binaries are written to `dist/`, which is
 ignored by git.
 
 ## Tests
+
+Check all TypeScript, Vue components, tests, PWA code, and build tooling:
+
+```bash
+bun run typecheck
+```
+
+This uses TypeScript 7 for ordinary TypeScript and Microsoft's maintained
+TypeScript 6 compatibility package for `vue-tsc`, whose released compiler API
+integration still requires it. Strict checking stays enabled in both.
 
 Run all unit tests:
 

@@ -24,7 +24,7 @@ async function authenticate(context: BrowserContext, websocket = false) {
     if (!forceWebSocket) {
       const NativeTransport = window.WebTransport;
       window.WebTransport = class extends NativeTransport {
-        constructor(url: string, options?: WebTransportOptions) {
+        constructor(url: string | URL, options?: WebTransportOptions) {
           super(url, options); void this.ready.then(() => { counters.webtransport = true; }).catch(() => {});
         }
       };
@@ -46,7 +46,7 @@ async function authenticate(context: BrowserContext, websocket = false) {
           init.output(audio);
         } });
       }
-      configure(config: AudioDecoderConfig) { counters.opus ||= config.codec === "opus"; super.configure(config); }
+      override configure(config: AudioDecoderConfig) { counters.opus ||= config.codec === "opus"; super.configure(config); }
     };
   }, websocket);
 }

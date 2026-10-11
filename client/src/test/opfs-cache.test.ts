@@ -15,7 +15,7 @@ class MemoryFileHandle {
   async getFile(): Promise<File> {
     const data = this.files.get(this.name);
     if (!data) throw new Error("not found");
-    return new File([data], this.name);
+    return new File([new Uint8Array(data)], this.name);
   }
 
   async createWritable(): Promise<FileSystemWritableFileStream> {

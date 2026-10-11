@@ -13,6 +13,7 @@ import type {
 } from "@jmmp/shared";
 import { del, fail, get, ok, patch, post, readJson, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
+import type { SQLQueryBindings } from "bun:sqlite";
 import { decryptJson, encryptJson } from "../crypto.ts";
 
 interface SourceRow {
@@ -125,7 +126,7 @@ patch("/api/sources/:id", async (req: Req) => {
   if (!existing) return fail("not found", 404);
 
   const updates: string[] = [];
-  const values: unknown[] = [];
+  const values: SQLQueryBindings[] = [];
   if (body.name !== undefined) {
     updates.push("name = ?");
     values.push(body.name);

@@ -308,7 +308,7 @@ function maybeCacheStream(
   const [playbackStream, cacheStream] = stream.tee();
   void storeStream(track.id, cacheStream, {
     pinned: cacheOptions.pinned,
-    expectedBytes: track.fileSize,
+    ...(track.fileSize !== undefined ? { expectedBytes: track.fileSize } : {}),
   })
     .then(() => evictLruIfOver(cacheOptions.capBytes))
     .catch((err) => console.warn("failed to cache stream", err));
@@ -337,15 +337,15 @@ export async function* readChunked(
   chunkSize = CHUNK
 ): AsyncGenerator<Uint8Array> {
   const reader = stream.getReader();
-  let pending: Uint8Array | null = null;
+  let pending: Uint8Array = new Uint8Array(0);
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
     if (!value) continue;
-    if (!pending) {
+    if (!pending.length) {
       pending = value;
     } else {
-      const combined = new Uint8Array(pending.length + value.length);
+      const combined: Uint8Array = new Uint8Array(pending.length + value.length);
       combined.set(pending, 0);
       combined.set(value, pending.length);
       pending = combined;

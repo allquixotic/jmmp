@@ -22,7 +22,7 @@ export function reloadOnceOnControllerChange(
 }
 
 export function requestWaitingWorkerActivation(
-  registration: ServiceWorkerRegistration
+  registration: { waiting: Pick<ServiceWorker, "postMessage"> | null }
 ): void {
   registration.waiting?.postMessage({ type: "SKIP_WAITING" });
 }

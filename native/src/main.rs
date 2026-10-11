@@ -38,14 +38,13 @@ async fn main() -> anyhow::Result<()> {
     let mut options = moq_audio::encode::Options::default();
     options.track = Some("audio.opus".into());
     options.settings.bitrate = Some(moq_net::bandwidth::Rate::from_bps(config.bitrate));
-    options.group_duration = std::time::Duration::from_millis(100);
     let mut audio = moq_audio::encode::Producer::new(
         &mut broadcast,
         catalog.clone(),
         Default::default(),
         &options,
     )?;
-    // This Rust revision indexes each track separately. Released @moq/hang
+    // The Rust catalog indexes each track separately. Released @moq/hang
     // 0.5.2 expects the earlier archive.track shape. This is a live broadcast:
     // omit archive discovery while retaining the media's ten-second cache.
     catalog.modify()?.archive = None;

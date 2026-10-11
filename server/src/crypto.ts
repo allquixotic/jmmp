@@ -8,7 +8,7 @@ const MACHINE_KEY_FILE = ".machine_key";
 
 export async function loadOrInitMachineKey(dataDir: string): Promise<CryptoKey> {
   const path = join(dataDir, MACHINE_KEY_FILE);
-  let raw: Uint8Array;
+  let raw: Uint8Array<ArrayBuffer>;
   if (existsSync(path)) {
     raw = new Uint8Array(readFileSync(path));
     if (raw.byteLength !== 32) {
@@ -41,8 +41,9 @@ export async function encrypt(key: CryptoKey, plaintext: string): Promise<Uint8A
 
 export async function decrypt(key: CryptoKey, blob: Uint8Array): Promise<string> {
   if (blob.byteLength < 13) throw new Error("encrypted blob too short");
-  const iv = blob.subarray(0, 12);
-  const ct = blob.subarray(12);
+  const owned = new Uint8Array(blob);
+  const iv = owned.subarray(0, 12);
+  const ct = owned.subarray(12);
   const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
   return new TextDecoder().decode(pt);
 }
@@ -76,7 +77,7 @@ export function generateBootstrapToken(): string {
 
 export async function sha256(input: string | Uint8Array): Promise<Uint8Array> {
   const buf =
-    typeof input === "string" ? new TextEncoder().encode(input) : input;
+    typeof input === "string" ? new TextEncoder().encode(input) : new Uint8Array(input);
   return new Uint8Array(await crypto.subtle.digest("SHA-256", buf));
 }
 

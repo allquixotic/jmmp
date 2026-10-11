@@ -11,13 +11,13 @@ import {
 // events passes a ServiceWorkerRegistration instance in their arguments.
 // ServiceWorkerRegistration: https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration
 
-const autoReloadUpdates = process.env.PROD;
+const autoReloadUpdates = import.meta.env.QUASAR_PROD;
 
 if (autoReloadUpdates && 'serviceWorker' in navigator) {
   reloadOnceOnControllerChange(navigator.serviceWorker, window.location);
 }
 
-register(process.env.SERVICE_WORKER_FILE, {
+register(import.meta.env.QUASAR_SERVICE_WORKER_FILE, {
   // The registrationOptions object will be passed as the second argument
   // to ServiceWorkerContainer.register()
   // https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerContainer/register#Parameter

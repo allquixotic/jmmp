@@ -28,7 +28,7 @@ export async function extractArtFromBytes(
   }
   if (!result) return null;
   const hash = await sha256Hex(result.data);
-  const blob = new Blob([result.data], { type: result.mime });
+  const blob = new Blob([new Uint8Array(result.data)], { type: result.mime });
   await putArt(hash, blob);
   return { hash, mime: result.mime, blob };
 }
@@ -210,7 +210,7 @@ function readU32(bytes: Uint8Array, off: number): number {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", bytes);
+  const buf = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   let out = "";
   const b = new Uint8Array(buf);
   for (let i = 0; i < b.length; i++) out += b[i]!.toString(16).padStart(2, "0");

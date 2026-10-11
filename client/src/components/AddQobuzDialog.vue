@@ -65,7 +65,7 @@ const oauthUrl = ref<string | null>(null);
 const oauthState = ref<string | null>(null);
 
 const sources = useSourcesStore();
-let pollId: ReturnType<typeof window.setInterval> | null = null;
+let pollId: number | null = null;
 
 watch(model, (open) => {
   emit("update:modelValue", open);

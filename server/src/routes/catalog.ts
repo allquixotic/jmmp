@@ -14,7 +14,7 @@ import type {
   TrackListResponse,
 } from "@jmmp/shared";
 import { codecFromExtension, type Codec } from "@jmmp/shared";
-import type { Database } from "bun:sqlite";
+import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { fail, get, ok, post, readJson, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
 import { loadAdapter } from "../sources/index.ts";
@@ -103,7 +103,7 @@ get("/api/catalog/artists", async (req: Req) => {
   const source = req.url.searchParams.get("source");
   const q = req.url.searchParams.get("q");
   const conditions: string[] = ["artist IS NOT NULL", "artist != ''"];
-  const params: unknown[] = [];
+  const params: SQLQueryBindings[] = [];
   if (source) {
     conditions.push("source_id = ?");
     params.push(parseInt(source, 10));
@@ -140,7 +140,7 @@ get("/api/catalog/albums", async (req: Req) => {
   const artist = req.url.searchParams.get("artist");
   const source = req.url.searchParams.get("source");
   const conditions: string[] = ["album IS NOT NULL", "album != ''"];
-  const params: unknown[] = [];
+  const params: SQLQueryBindings[] = [];
   if (artist) {
     conditions.push("(artist = ? OR album_artist = ?)");
     params.push(artist, artist);
@@ -190,7 +190,7 @@ get("/api/catalog/tracks", async (req: Req) => {
   const artist = req.url.searchParams.get("artist");
   const source = req.url.searchParams.get("source");
   const conditions: string[] = [];
-  const params: unknown[] = [];
+  const params: SQLQueryBindings[] = [];
   if (album) {
     conditions.push("album = ?");
     params.push(album);
@@ -295,7 +295,7 @@ export function searchLocalCatalog(
   }
   const conditions = localSearchConditions(search, filters);
   const rows = db
-    .query<TrackRow, unknown[]>(
+    .query<TrackRow, SQLQueryBindings[]>(
       `SELECT t.* FROM tracks t
        JOIN tracks_fts f ON f.rowid = t.id
        WHERE ${conditions.sql}
@@ -335,7 +335,7 @@ function searchLocalAlbums(
   if (filters.field === "title") return [];
   const conditions = localSearchConditions(search, filters);
   const rows = db
-    .query<AlbumRow, unknown[]>(
+    .query<AlbumRow, SQLQueryBindings[]>(
       `SELECT t.source_id, t.album, MAX(t.artist) AS artist,
               MAX(t.album_artist) AS album_artist, MAX(t.year) AS year,
               MAX(t.art_hash) AS art_hash
@@ -368,7 +368,7 @@ function searchLocalArtists(
   if (filters.field === "title" || filters.field === "album") return [];
   const conditions = localSearchConditions(search, filters);
   const rows = db
-    .query<ArtistRow, unknown[]>(
+    .query<ArtistRow, SQLQueryBindings[]>(
       `WITH matched AS (
          SELECT t.source_id, t.artist, t.album_artist
          FROM tracks t
@@ -420,9 +420,9 @@ function addTrackArtists(artistSet: Map<string, Artist>, track: Track): void {
 function localSearchConditions(
   search: NormalizedSearchQuery,
   filters: CatalogSearchFilters
-): { sql: string; params: unknown[] } {
+): { sql: string; params: SQLQueryBindings[] } {
   const conditions = ["tracks_fts MATCH ?"];
-  const params: unknown[] = [fieldScopedFtsExpression(search, filters.field)];
+  const params: SQLQueryBindings[] = [fieldScopedFtsExpression(search, filters.field)];
   if (filters.sourceId !== null) {
     conditions.push("t.source_id = ?");
     params.push(filters.sourceId);
@@ -502,7 +502,7 @@ async function searchQobuz(
   filters: { sourceId: number | null; field: SearchField }
 ): Promise<SearchResponse> {
   const where = ["kind = 'qobuz'"];
-  const params: unknown[] = [];
+  const params: SQLQueryBindings[] = [];
   if (filters.sourceId !== null) {
     where.push("id = ?");
     params.push(filters.sourceId);

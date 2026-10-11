@@ -16,6 +16,7 @@ const baseTrack: Track = {
   codec: "mp3",
   fileSize: 4_800_000,
 };
+const { fileSize: _fileSize, ...unsizedTrack } = baseTrack;
 
 describe("estimateByteOffset", () => {
   test("at start", () => {
@@ -33,7 +34,7 @@ describe("estimateByteOffset", () => {
   });
   test("null when sizing info missing", () => {
     expect(
-      estimateByteOffset({ ...baseTrack, fileSize: undefined }, 30)
+      estimateByteOffset(unsizedTrack, 30)
     ).toBeNull();
     expect(
       estimateByteOffset({ ...baseTrack, durationMs: 0 }, 30)
@@ -52,7 +53,7 @@ describe("estimateByteOffset", () => {
     });
   });
   test("seek plan falls back to restart-and-discard without sizing info", () => {
-    expect(planSeek({ ...baseTrack, fileSize: undefined }, 12)).toEqual({
+    expect(planSeek(unsizedTrack, 12)).toEqual({
       startByte: 0,
       offsetSeconds: 12,
       discardSeconds: 12,

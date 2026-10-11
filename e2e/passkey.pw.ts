@@ -5,10 +5,10 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { addVirtualAuthenticator } from "./webauthn";
 
-// Drives the full passkey registration flow using Playwright's virtual
+// Drives registration and subsequent sign-in using Playwright's virtual
 // authenticator via the Chrome DevTools Protocol.
 
-test("bootstrap → virtual-authenticator register → land in app", async ({ page, context, browser: _browser }) => {
+test("bootstrap → register passkey → sign out and sign in → use library", async ({ page, context, browser: _browser }) => {
   const authenticatorId = await addVirtualAuthenticator(page, context);
   expect(authenticatorId).toBeTruthy();
   await page.goto("/login");
@@ -24,6 +24,12 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
   await page.getByLabel("Passkey nickname", { exact: false }).fill("E2E passkey");
   await page.getByRole("button", { name: /Register passkey/i }).click();
 
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("Start by adding a source")).toBeVisible();
+
+  await page.getByRole("button", { name: /Sign out/ }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await page.getByRole("button", { name: "Sign in with passkey" }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("Start by adding a source")).toBeVisible();
 
