@@ -3,7 +3,7 @@
 
 import type { Codec } from "./codec.ts";
 
-export type SourceKind = "local" | "s3" | "qobuz";
+export type SourceKind = "local" | "s3" | "qobuz" | "spotify";
 
 export type FetchMode = "auto" | "direct" | "proxy";
 export type CachePolicy = "all" | "pin-only" | "none";
@@ -29,7 +29,8 @@ export type SourceConfig =
       prefix?: string;
       pathStyle?: boolean;
     }
-  | { kind: "qobuz"; userId: string; email: string };
+  | { kind: "qobuz"; userId: string; email: string }
+  | { kind: "spotify"; clientId: string; redirectUri: string; uris: string[] };
 
 export type SourceSecrets =
   | { kind: "local" }
@@ -40,7 +41,8 @@ export type SourceSecrets =
       appId: string;
       appSecret: string;
       harvestedAt: number;
-    };
+    }
+  | { kind: "spotify"; accessToken: string; refreshToken: string; expiresAt: number };
 
 export interface Artist {
   id: string;

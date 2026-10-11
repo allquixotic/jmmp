@@ -5,7 +5,7 @@
 
 <template>
   <q-page>
-    <PageHero title="Sources" subtitle="Server uploads, S3 buckets, and Qobuz.">
+    <PageHero title="Sources" subtitle="Server uploads, S3 buckets, Qobuz, and Spotify.">
       <template v-slot:actions>
         <q-btn-dropdown unelevated color="primary" icon="add" label="Add source">
           <q-list>
@@ -20,6 +20,10 @@
             <q-item clickable v-close-popup @click="showQobuz = true">
               <q-item-section avatar><q-icon name="library_music" /></q-item-section>
               <q-item-section>Qobuz</q-item-section>
+            </q-item>
+            <q-item clickable v-close-popup @click="showSpotify = true">
+              <q-item-section avatar><q-icon name="music_note" /></q-item-section>
+              <q-item-section>Spotify</q-item-section>
             </q-item>
           </q-list>
         </q-btn-dropdown>
@@ -61,6 +65,7 @@
     <AddLocalDialog :source-id="importSourceId" v-model="showLocal" @added="afterAdd" />
     <AddS3Dialog v-model="showS3" @added="afterAdd" />
     <AddQobuzDialog v-model="showQobuz" @added="afterAdd" />
+    <AddSpotifyDialog v-model="showSpotify" @added="afterAdd" />
   </q-page>
 </template>
 
@@ -70,6 +75,7 @@ import { useSourcesStore } from "src/stores/sources";
 import AddLocalDialog from "src/components/AddLocalDialog.vue";
 import AddS3Dialog from "src/components/AddS3Dialog.vue";
 import AddQobuzDialog from "src/components/AddQobuzDialog.vue";
+import AddSpotifyDialog from "src/components/AddSpotifyDialog.vue";
 import PageHero from "src/components/PageHero.vue";
 
 const sources = useSourcesStore();
@@ -78,6 +84,7 @@ const showLocal = ref(false);
 const importSourceId = ref<number>();
 const showS3 = ref(false);
 const showQobuz = ref(false);
+const showSpotify = ref(false);
 
 onMounted(async () => {
   try {
@@ -91,6 +98,7 @@ function iconFor(kind: string): string {
   if (kind === "local") return "folder";
   if (kind === "s3") return "cloud";
   if (kind === "qobuz") return "library_music";
+  if (kind === "spotify") return "music_note";
   return "storage";
 }
 
@@ -161,6 +169,7 @@ async function afterAdd(): Promise<void> {
 .source-icon-qobuz {
   background: linear-gradient(135deg, #5a4cff, #2d1fa8);
 }
+.source-icon-spotify { background: #16883e; }
 
 .source-text {
   flex: 1;

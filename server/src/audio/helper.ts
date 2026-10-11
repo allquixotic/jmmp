@@ -3,7 +3,11 @@
 import { X509Certificate } from "node:crypto";
 import type { MoqSettings } from "@jmmp/shared";
 import { audioAssets } from "./runtime.ts";
+export function redactMoqDiagnostics(value: string): string {
+  return value.replace(/(?:https?|wss?):\/\/[^\s]+/g, "[relay URL]").replace(/eyJ[A-Za-z0-9_.-]+/g, "[credential]");
+}
 export class NativeOutput {
+  readonly name = `jmmp-${crypto.randomUUID()}.hang`;
   private child?: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
   private writing = Promise.resolve();
   fingerprint?: string;
@@ -23,7 +27,9 @@ export class NativeOutput {
     const child = this.child = Bun.spawn([assets.helper], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     let stderr = "";
     void (async () => { for await (const bytes of child.stderr) stderr = (stderr + new TextDecoder().decode(bytes)).slice(-4000); })();
-    child.stdin.write(JSON.stringify({ relay, bitrate: settings.bitrate, upstream }) + "\n"); await child.stdin.flush();
+    // Relay credentials can live in URL paths; never return diagnostics containing them.
+    const safeError = () => redactMoqDiagnostics(stderr);
+    child.stdin.write(JSON.stringify({ relay, bitrate: settings.bitrate, name: this.name, upstream }) + "\n"); await child.stdin.flush();
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -34,7 +40,7 @@ export class NativeOutput {
             const end = pending.indexOf("\n");
             if (end >= 0 && JSON.parse(pending.slice(0, end)).event === "ready") return;
           }
-          throw new Error(`MoQ helper exited: ${stderr}`);
+          throw new Error(`MoQ helper exited: ${safeError()}`);
         })(),
         new Promise<never>((_, reject) => { startupTimer = setTimeout(() => reject(new Error("MoQ helper startup timed out")), 30000);  }),
       ]);
@@ -44,7 +50,7 @@ export class NativeOutput {
         const host = settings.bind === "0.0.0.0" ? "127.0.0.1" : settings.bind === "::" ? "[::1]" : settings.bind.includes(":") ? `[${settings.bind}]` : settings.bind;
         this.fingerprint = (await (await fetch(`http://${host}:${settings.port}/certificate.sha256`, { signal: AbortSignal.timeout(5000) })).text()).trim();
       }
-      void child.exited.then(code => { if (this.alive) { this.alive = false; this.onFailure(`MoQ helper exited (${code}): ${stderr}`); } });
+      void child.exited.then(code => { if (this.alive) { this.alive = false; this.onFailure(`MoQ helper exited (${code}): ${safeError()}`); } });
     } catch (error) { clearTimeout(startupTimer); await this.close(); throw error; }
   }
   write(kind: number, generation: number, pcm?: Float32Array): Promise<void> {

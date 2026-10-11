@@ -12,9 +12,19 @@ import { loadOrInitMachineKey, encryptJson } from "../crypto.ts";
 import { mintSession } from "../session.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import { playbackController } from "../audio/controller.ts";
+import { redactMoqDiagnostics } from "../audio/helper.ts";
 import { setLogLevel } from "../log.ts";
 import { publicRequest, startPublicListener } from "../public-listener.ts";
 import "../routes/index.ts";
+
+test("V12: native diagnostics conceal publisher credentials in paths, queries and JWT fields", () => {
+  const credential = "eyJhbGciOiJIUzI1NiJ9.eyJwdWJsaXNoIjp0cnVlfQ.secret-signature";
+  const result = redactMoqDiagnostics(`Connection failed https://relay.example/${credential}\nws://relay.example/moq?jwt=${credential}\ncredential=${credential}\nreason: unauthorized`);
+  expect(result).not.toContain(credential);
+  expect(result).not.toContain("secret-signature");
+  expect(result).not.toContain("relay.example");
+  expect(result).toContain("reason: unauthorized");
+});
 
 async function setup() {
   setLogLevel("error");
@@ -33,10 +43,10 @@ function timeout<T>(promise: Promise<T>, ms = 5000): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("test timed out")), ms); })]).finally(() => clearTimeout(timer));
 }
-async function connect(url: string) {
+async function connect(url: string, name: string, keepCatalog = false) {
   const origin = new Net.Origin.Producer();
   const session = await Net.Connection.connect({ url: new URL(url), consume: origin, signal: AbortSignal.timeout(5000) });
-  const request = origin.request(Net.Path.from("jmmp.hang"));
+  const request = origin.request(Net.Path.from(name));
   while (!request.active.peek()) await timeout(request.active.changed());
   const broadcast = request.active.peek()!;
   const catalog = broadcast.track("catalog.json").subscribe().ordered();
@@ -44,9 +54,9 @@ async function connect(url: string) {
   expect(frame).toBeDefined();
   const json = JSON.parse(new TextDecoder().decode(frame!.payload));
   expect(RootSchema.safeParse(json).success).toBe(true);
-  catalog.close();
-  return { json, audio: broadcast.track("audio.opus").subscribe({ maxAge: Net.Time.Milli(5000) }).ordered(),
-    async close() { request.close(); origin.close(); await session.close(); } };
+  if (!keepCatalog) catalog.close();
+  return { json, catalog, audio: broadcast.track("audio.opus").subscribe({ maxAge: Net.Time.Milli(5000) }).ordered(),
+    async close() { catalog.close(); request.close(); origin.close(); await session.close(); } };
 }
 
 test("V1/V7: default output stays off; invalid configuration never persists", async () => {
@@ -88,8 +98,13 @@ test("V11/V12: public listener isolates all controller APIs and forwards subscri
     expect(JSON.parse(Buffer.from(new URL(credentials.data.websocketUrl).searchParams.get("jwt")!.split(".")[1]!, "base64url").toString()).public).toBe(true);
     expect((await app.call("/api/moq/listener")).status).toBe(200);
     expect((await dispatch(new Request("http://localhost/api/moq/listener"), app.ctx)).status).toBe(401);
-    listener = await connect(`http://127.0.0.1:${publicPort}/moq`);
+    listener = await connect(`http://127.0.0.1:${publicPort}/moq`, credentials.data.name, true);
     expect(listener.json.audio).toBeDefined();
+    // A relay without joining FETCH still gets a fresh catalog while audio is idle.
+    const refreshed = JSON.parse(new TextDecoder().decode((await timeout(listener.catalog.readFrame(), 5000))!.payload));
+    expect(RootSchema.safeParse(refreshed).success).toBe(true);
+    expect(refreshed.audio).toEqual(listener.json.audio);
+    expect(refreshed.jmmp.revision).toBeGreaterThan(listener.json.jmmp?.revision ?? 0);
     playbackController(app.ctx).status.error = "Private source URL and credentials";
     const status = await (await request("/api/public/moq/status"))!.json();
     expect(status.data.error).toBe("Broadcast unavailable");
@@ -135,7 +150,7 @@ test("V2/V4/V6/V8/V9: two authenticated listeners share one server source reader
     const wsUrl = listener.url.replace("localhost", "127.0.0.1");
     const denied = new URL(wsUrl); denied.searchParams.set("jwt", "invalid");
     await expect(Net.Connection.connect({ url: denied, signal: AbortSignal.timeout(5000) })).rejects.toThrow();
-    listeners.push(await connect(wsUrl), await connect(wsUrl));
+    listeners.push(await connect(wsUrl, listener.name), await connect(wsUrl, listener.name));
     expect(Object.values(listeners[0]!.json.audio.renditions).some((r: any) => r.codec === "opus")).toBe(true);
     expect((await app.call("/api/stream/1")).status).toBe(409);
     expect((await app.call("/api/playback", "POST", { command: { type: "play", trackId: 1 } })).status).toBe(409);

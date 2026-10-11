@@ -6,6 +6,7 @@
     <div class="q-pa-lg">
       <q-btn color="primary" :label="listening ? 'Disconnect' : 'Listen'" @click="toggle" />
       <p class="q-mt-md">{{ state }}</p>
+      <p v-if="listening" role="status">{{ transport }}<span v-if="audio"> · {{ audio }}</span></p>
       <p v-if="error" role="alert" class="text-negative">{{ error }}</p>
       <q-btn v-if="!publicListener" flat label="Library" to="/" />
     </div>
@@ -18,12 +19,15 @@ import { useRoute } from "vue-router";
 import { MoqPlayer } from "src/audio/moq";
 import PageHero from "src/components/PageHero.vue";
 const listening = ref(false), state = ref(""), error = ref("");
+const transport = ref("Connecting"), audio = ref("");
 const publicListener = useRoute().meta.publicListener === true;
 const player = new MoqPlayer(publicListener);
 player.addEventListener("error", e => { error.value = (e as CustomEvent).detail; });
 player.addEventListener("state", e => { state.value = (e as CustomEvent).detail; });
+player.addEventListener("transport", e => { transport.value = (e as CustomEvent).detail; });
+player.addEventListener("audio", e => { audio.value = (e as CustomEvent).detail; });
 async function toggle() {
-  if (listening.value) { player.dispose(); listening.value = false; state.value = "Disconnected"; return; }
+  if (listening.value) { player.dispose(); listening.value = false; state.value = "Disconnected"; audio.value = ""; transport.value = "Connecting"; return; }
   error.value = "";
   try { await player.listen(); listening.value = true; } catch (e) { error.value = String(e); }
 }

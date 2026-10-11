@@ -11,11 +11,13 @@ import migration0004 from "./migrations/0004_playlist_track_overlays.sql" with {
 import migration0005 from "./migrations/0005_playlist_local_order.sql" with { type: "text" };
 import migration0006 from "./migrations/0006_playlist_pinned.sql" with { type: "text" };
 import migration0007 from "./migrations/0007_local_files.sql" with { type: "text" };
+import migration0008 from "./migrations/0008_spotify.sql" with { type: "text" };
 
 interface MigrationFile {
   version: number;
   name: string;
   sql: string;
+  foreignKeysOff?: boolean;
 }
 
 const MIGRATIONS: MigrationFile[] = [
@@ -42,6 +44,7 @@ const MIGRATIONS: MigrationFile[] = [
     sql: migration0006 as unknown as string,
   },
   { version: 7, name: "0007_local_files.sql", sql: migration0007 as unknown as string },
+  { version: 8, name: "0008_spotify.sql", sql: migration0008 as unknown as string, foreignKeysOff: true },
 ];
 
 export function initDb(dataDir: string): Database {
@@ -71,8 +74,10 @@ function migrate(db: Database): void {
     log.info(`applying migration ${m.name}`);
     const tx = db.transaction(() => {
       db.exec(m.sql);
+      if (m.foreignKeysOff && db.query("PRAGMA foreign_key_check").all().length) throw new Error("Migration would break foreign keys");
       db.run("INSERT INTO _schema_migrations (version) VALUES (?)", [m.version]);
     });
-    tx();
+    if (m.foreignKeysOff) db.exec("PRAGMA foreign_keys = OFF");
+    try { tx(); } finally { if (m.foreignKeysOff) db.exec("PRAGMA foreign_keys = ON"); }
   }
 }

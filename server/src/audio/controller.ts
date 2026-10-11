@@ -108,7 +108,7 @@ export class PlaybackController {
     websocket.searchParams.set("jwt", jwt);
     return { url: this.settings.webtransportUrl || url.href,
       webtransportUrl: this.settings.webtransportUrl || transport.href,
-      websocketUrl: websocket.href, name: "jmmp.hang",
+      websocketUrl: websocket.href, name: this.helper!.name,
       fingerprint: !this.settings.webtransportUrl && new URL(base).protocol === "http:" ? this.helper?.fingerprint : undefined, expires };
   }
   private async start(settings: MoqSettings) {
@@ -125,10 +125,11 @@ export class PlaybackController {
           const device = this.ctx.db.query<{ jwt_jti: string }, [string]>("SELECT jwt_jti FROM session_devices WHERE id = ?").get(String(payload.did));
           if (!device || device.jwt_jti !== payload.jti) throw new Error("Session revoked");
         }
-        return Response.json({ root: "", subscribe: ["jmmp.hang"], publish: [], expires: payload.exp, revalidate: 30 });
+        return Response.json({ root: "", subscribe: [this.helper!.name], publish: [], expires: payload.exp, revalidate: 30 });
       } catch { return new Response(null, { status: 403 }); }
     }});
     const helper = this.helper = new NativeOutput();
+    this.status.instanceId = crypto.randomUUID();
     helper.onFailure = error => this.fail(error);
     try {
       const cfg = this.ctx.cfg.moqUpstream;

@@ -15,6 +15,7 @@ import { del, fail, get, ok, patch, post, readJson, type Req } from "../router.t
 import { requireFullSession } from "../session.ts";
 import type { SQLQueryBindings } from "bun:sqlite";
 import { decryptJson, encryptJson } from "../crypto.ts";
+import { normalizeSpotifyUris } from "../sources/spotify.ts";
 
 interface SourceRow {
   id: number;
@@ -48,6 +49,7 @@ function defaultCachePolicy(kind: SourceKind): "all" | "pin-only" | "none" {
     case "s3":
       return "all";
     case "qobuz":
+    case "spotify":
       return "pin-only";
   }
 }
@@ -124,6 +126,16 @@ patch("/api/sources/:id", async (req: Req) => {
     .query<SourceRow, [number]>("SELECT * FROM sources WHERE id = ?")
     .get(id);
   if (!existing) return fail("not found", 404);
+  if (existing.kind === "spotify") {
+    if (body.secrets !== undefined) return fail("Reconnect Spotify through OAuth to change credentials");
+    if (body.fetchMode !== undefined && body.fetchMode !== "proxy") return fail("Spotify audio is fetched by the server");
+    if (body.config !== undefined) {
+      const previous = JSON.parse(existing.config_json) as Extract<SourceConfig, { kind: "spotify" }>;
+      if (body.config.kind !== "spotify" || body.config.clientId !== previous.clientId || body.config.redirectUri !== previous.redirectUri) return fail("Reconnect Spotify to change application settings");
+      try { body.config = { ...previous, uris: normalizeSpotifyUris(body.config.uris) }; }
+      catch (error) { return fail(error instanceof Error ? error.message : "Invalid Spotify links"); }
+    }
+  }
 
   const updates: string[] = [];
   const values: SQLQueryBindings[] = [];

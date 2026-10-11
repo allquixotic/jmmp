@@ -50,8 +50,8 @@ T5|x|ordinary MoQ browser playback and GUI configuration|V2,V7,V9,I.output,I.pla
 T6|x|integration tests, builds and deployment docs|V1,V2,V3,V4,V5,V6,V7,V8,V9
 T7|x|upgrade stable dependencies, fix all type errors, verify builds and browser playback|V1,V2,V3,V4,V5,V6,V7,V8,V9,V10,I.typecheck,I.build
 T8|x|public listener, managed relay publishing and independent transport URLs|V1,V2,V6,V7,V8,V9,V10,V11,V12,I.public,I.upstream
-T9|~|vendor librespot, upgrade direct crates and add Spotify source|V3,V8,V10,V13,I.spotify,I.build
-T10|.|publish generic features; deploy isolated public/control services and verify CDN playback|V6,V8,V9,V10,V11,V12,V13,I.public,I.upstream,I.spotify
+T9|x|vendor librespot, upgrade direct crates and add Spotify source|V3,V8,V10,V13,I.spotify,I.build
+T10|~|publish generic features; deploy isolated public/control services and verify CDN playback|V6,V8,V9,V10,V11,V12,V13,I.public,I.upstream,I.spotify
 
 ## §B BUGS
 id|date|cause|fix
@@ -68,3 +68,10 @@ B9|2026-10-11|No repository typecheck command; generated Quasar strict types, Bu
 B10|2026-10-11|Git MoQ encoder exposes unreleased grouping knob; latest vue-tsc requires old compiler API; Quasar v3 changes env/wrappers/PWA packaging|Use stable crates' per-packet groups, official TypeScript 6 compatibility API beside TypeScript 7, migrate Quasar v3 interfaces (V8,V10)
 B11|2026-10-11|Concurrent Playwright suites clean shared report directory and delete another suite's traces|Use separate standard, bundled MoQ, and compiled MoQ output directories (V10)
 B12|2026-10-11|MoQ protocol parser returns String rather than StdError; anyhow context bound fails|Map protocol parse error explicitly; compile native helper (V10,V12)
+B13|2026-10-11|Stable librespot APIs use older digest, RNG, XML, decoder, HTTP, CPAL and rodio interfaces; latest ALSA crates conflict on native links|Preserve cryptographic encoding and adapt source APIs; vendor minimal CPAL/rodio patches, verify headless/rodio builds and workspace tests (V10,V13)
+B14|2026-10-11|Bun fetch mock lacks preconnect member; source-worker termination can orphan Spotify login before audio starts|Retain fetch mock signature and add parent heartbeats bounding native child lifetime (V4,V10,V13)
+B15|2026-10-11|vergen 10 omits git keys in source archives; vendored core expects compile-time keys|Supply explicit archive metadata when git worktree unavailable; verify Linux archive build (V8,V13)
+B16|2026-10-11|Upgraded vergen requires Rust 1.96 above declared helper/fork minimum|Raise manifests, build diagnostics and documentation to actual minimum (V8,V10)
+B17|2026-10-11|Permanent outbound publisher failure unobserved; optional native diagnostics can contain relay tokens|Observe upstream termination and redact diagnostic URL/JWT credentials before returning errors; regression check (V8,V12)
+B18|2026-10-11|New MoQ clients use joining FETCH, unsupported by Cloudflare beta; cached catalog join stalls|Publish periodic catalog revisions without audio; verify idle snapshot refresh and managed WT catalog (V7,V12)
+B19|2026-10-11|Cloudflare retains withdrawn publication state across quick same-name restarts|Use unique helper broadcast names/instance IDs and drain outbound connection on shutdown; verify restarted managed catalog (V8,V12)

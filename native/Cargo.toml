@@ -3,7 +3,7 @@ name = "jmmp-moq"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.95"
+rust-version = "1.96"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -16,6 +16,9 @@ moq-audio = { version = "0.1.10", default-features = false }
 moq-net = "0.3.10"
 moq-mux = "0.10.11"
 moq-tokio = { version = "0.19.23", default-features = false, features = ["noq", "websocket"] }
+librespot-core = { path = "vendor/librespot/core", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-audio = { path = "vendor/librespot/audio", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-metadata = { path = "vendor/librespot/metadata", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 [[bin]]
 name = "jmmp-moq"

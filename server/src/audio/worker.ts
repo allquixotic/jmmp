@@ -31,7 +31,8 @@ self.onmessage = e => {
 
 async function play(m: { generation: number; dataDir: string; trackId: number; position: number }) {
   const mine = m.generation;
-  const db = new Database(join(m.dataDir, "jmmp.sqlite"), { readonly: true });
+  // Spotify token refresh persists encrypted credentials from this server worker.
+  const db = new Database(join(m.dataDir, "jmmp.sqlite"));
   let reader: Pick<ReadableStreamDefaultReader<Uint8Array>, "read" | "cancel"> | undefined;
   cancelled = () => { void reader?.cancel().catch(() => {}); };
   const decoderHolder: { decoder?: Awaited<ReturnType<typeof createDecoder>> } = {};

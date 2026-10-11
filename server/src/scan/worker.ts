@@ -138,7 +138,7 @@ export async function runScan(
     });
     log.info(`scan complete source=${sourceId} tracks=${scanned}`);
 
-    if (opts.extractMetadata) {
+    if (opts.extractMetadata && loaded.kind !== "spotify") {
       void backgroundEnrich(db, machineKey, sourceId);
     }
   } catch (err) {

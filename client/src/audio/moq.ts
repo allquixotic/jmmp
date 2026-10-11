@@ -91,6 +91,13 @@ export class MoqPlayer extends EventTarget {
         this.retryDelay = 500; this.dispatchEvent(new CustomEvent("error", { detail: null }));
       }
     }));
+    this.cleanups.push(this.connection.transport.subscribe(() => {
+      this.dispatchEvent(new CustomEvent("transport", { detail: this.connection?.transport.peek() ?? "Connecting" }));
+    }));
+    this.cleanups.push(this.watch.audio.out.sampleRate.subscribe(() => {
+      const rate = this.watch?.audio.out.sampleRate.peek();
+      if (rate) this.dispatchEvent(new CustomEvent("audio", { detail: `Opus · ${rate / 1000} kHz` }));
+    }));
     this.polling = setInterval(() => void this.poll(), 250);
     this.renewal = setTimeout(() => this.reconnect(), Math.max(1000, listener.expires * 1000 - Date.now() - 60000));
   }

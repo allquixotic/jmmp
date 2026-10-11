@@ -5,6 +5,7 @@ import "./auth.ts";
 import "./me.ts";
 import "./sources.ts";
 import "./qobuz.ts";
+import "./spotify.ts";
 import "./stream.ts";
 import "./uploads.ts";
 import "./moq.ts";

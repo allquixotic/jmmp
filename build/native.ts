@@ -11,7 +11,7 @@ const cargoTarget = target && target !== host ? target : undefined;
 const args = ["cargo", "build", "--release", "--locked", "--manifest-path", join(root, "native/Cargo.toml")];
 if (cargoTarget) args.push("--target", cargoTarget);
 const result = Bun.spawn(args, { cwd: root, stdout: "inherit", stderr: "inherit" });
-if (await result.exited) throw new Error("Rust helper build failed (install Rust >= 1.95 and the target toolchain)");
+if (await result.exited) throw new Error("Rust helper build failed (install Rust >= 1.96 and the target toolchain)");
 const helper = join(root, "native/target", ...(cargoTarget ? [cargoTarget] : []), "release/jmmp-moq");
 // Decoder packages assign names to their worker exports during initialization.
 // Bun's DCE currently drops those classes but retains the assignments. Keep all

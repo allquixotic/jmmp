@@ -26,7 +26,7 @@ The server stores state in sqlite and uses passkeys for authentication.
 
 - Bun 1.4 or newer.
 - Node.js 22.22+, 24, 26, 28, or 30 for Quasar's client build tooling.
-- Rust 1.95 or newer and a native compiler toolchain when building jmmp, or
+- Rust 1.96 or newer and a native compiler toolchain when building jmmp, or
   when first enabling MoQ from a source checkout. Packaged executables include
   the helper and worker; their users need no Rust installation.
 - A browser with passkey support.
@@ -251,3 +251,50 @@ your environment before installing either one.
 ## License
 
 jmmp is licensed under the Apache License, Version 2.0. See `LICENSE`.
+
+### Spotify source
+
+Add Spotify from **Sources → Add source → Spotify**. Use a Spotify Premium
+account and your own Spotify application client ID. Register the exact redirect
+URI displayed by jmmp in the [Spotify developer dashboard](https://developer.spotify.com/dashboard).
+Spotify requires HTTPS, or an explicit loopback IP for local development;
+`localhost` redirect URIs are not accepted. Paste track, album or playlist links
+(one per line), then complete sign-in. jmmp imports their metadata and playlists.
+The source's **Rescan** button refreshes those collections; new collections can
+also be added through the source configuration API's `uris` list.
+
+Authorization uses [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow).
+Access and refresh tokens remain encrypted on the server. The integrated Rust
+helper fetches and decrypts Vorbis audio through librespot, and passes a bounded
+byte stream to jmmp's shared decoder/DSP. MoQ playback uses one server reader;
+ordinary playback downloads through jmmp and retains the existing browser cache.
+Cancellation stops the helper; parent heartbeats also bound its lifetime if a
+Bun audio worker is terminated while authentication or downloading is pending.
+
+jmmp vendors **librespot v0.8.0** under `native/vendor/librespot`, with its direct
+registry dependencies upgraded to stable releases and the corresponding API
+repairs. libspotify is a retired proprietary SDK; spotifyd builds on librespot
+and adds a daemon/audio-device layer that jmmp does not need. The internal fork
+therefore uses librespot's core/audio/metadata libraries directly. Provenance and
+licenses remain in each vendor directory. Minimal CPAL/rodio compatibility
+patches allow the upgraded fork's desktop backend to compile alongside ALSA 0.12;
+jmmp's shipped helper uses the headless Rustls configuration.
+
+Actual Spotify sign-in and playback require a permitted Spotify application
+and account. The automated checks exercise credential refresh/storage, OAuth
+session binding/replay rejection, byte ranges, pipe cancellation, migration and
+source builds without logging into a real Spotify account.
+
+For a managed relay, a headless catalog check is available in the source tree:
+`cargo run --locked --manifest-path native/Cargo.toml --example relay_probe -- --catalog`.
+Supply a **subscriber** URL on stdin, followed by the listener's broadcast name
+on a second line. Omit `--catalog` to read five media packets
+while a broadcast is playing. The example uses WebTransport and draft 16;
+normal jmmp listeners negotiate WebTransport and fall back to WebSockets.
+The helper republishes catalog snapshots every three seconds so relays without
+joining FETCH support can serve new listeners while playback is idle. This sends
+metadata only. Set `RUST_LOG` to enable native relay diagnostics; credentials in
+diagnostics returned by jmmp are redacted.
+Each helper lifetime uses a fresh broadcast name and playback instance ID;
+listeners renew their connection after a restart, and upstream relay caches
+cannot confuse the previous publication with the new one.

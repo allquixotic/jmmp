@@ -23,6 +23,6 @@ export async function audioAssets(dataDir: string): Promise<{ helper: string; wo
   const helper = join(root, "native/target/debug/jmmp-moq");
   // Source checkout startup builds automatically when output is first enabled.
   const build = Bun.spawn(["cargo", "build", "--locked", "--quiet", "--manifest-path", join(root, "native/Cargo.toml")], { stdout: "inherit", stderr: "inherit" });
-  if (await build.exited) throw new Error("Could not build jmmp-moq; install Rust >= 1.95");
+  if (await build.exited) throw new Error("Could not build jmmp-moq; install Rust >= 1.96");
   return { helper, worker: join(root, "server/src/audio/worker.ts") };
 }

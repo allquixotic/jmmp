@@ -7,6 +7,7 @@ import { decryptJson } from "../crypto.ts";
 import { makeLocalAdapter } from "./local.ts";
 import { makeS3Adapter } from "./s3.ts";
 import { makeQobuzAdapter } from "./qobuz.ts";
+import { makeSpotifyAdapter } from "./spotify.ts";
 import type { ServerSourceAdapter } from "./types.ts";
 
 export async function loadAdapter(
@@ -36,6 +37,8 @@ export async function loadAdapter(
   if (row.kind === "s3") return { adapter: makeS3Adapter(config, secrets), kind: "s3" };
   if (row.kind === "qobuz")
     return { adapter: makeQobuzAdapter(config, secrets, sourceId), kind: "qobuz" };
+  if (row.kind === "spotify" && config.kind === "spotify")
+    return { adapter: makeSpotifyAdapter(db, machineKey, sourceId, config, dataDir), kind: "spotify" };
   if (row.kind === "local" && dataDir) return { adapter: makeLocalAdapter(db, dataDir, sourceId), kind: "local" };
   return null;
 }

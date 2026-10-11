@@ -6,11 +6,13 @@ use anyhow::{Context, ensure};
 use bytes::Bytes;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+mod spotify;
 
 #[derive(Deserialize)]
 struct Config {
     relay: moq_relay::Config,
     bitrate: u64,
+    name: String,
     upstream: Option<Upstream>,
 }
 
@@ -22,6 +24,12 @@ struct Upstream {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--spotify") {
+        return spotify::run().await;
+    }
+    if std::env::var_os("RUST_LOG").is_some() {
+        moq_tokio::Log::default().init()?;
+    }
     // Configuration arrives through stdin, never through process arguments.
     let mut input = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
@@ -37,10 +45,14 @@ async fn main() -> anyhow::Result<()> {
     let mut broadcast = relay
         .cluster()
         .origin
-        .publish("jmmp.hang", Default::default())?;
+        .publish(config.name, Default::default())?;
     let mut catalog = moq_mux::catalog::Producer::new(
         &mut broadcast,
-        moq_mux::catalog::Config::default().with_max_age(std::time::Duration::from_secs(10)),
+        moq_mux::catalog::Config::default()
+            .with_catalog(moq_mux::catalog::hang::Catalog::<
+                moq_mux::catalog::hang::Extra,
+            >::default())
+            .with_max_age(std::time::Duration::from_secs(10)),
     )?;
     let mut options = moq_audio::encode::Options::default();
     options.track = Some("audio.opus".into());
@@ -61,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
     ready.wait().await?;
     // Outbound only: the managed relay learns the broadcast through this
     // connection and clients never need an address for this server.
-    let _upstream = if let Some(upstream) = config.upstream {
+    let upstream = if let Some(upstream) = config.upstream {
         let mut connect = moq_tokio::connect::Config::default();
         connect.url = Some(
             upstream
@@ -89,6 +101,22 @@ async fn main() -> anyhow::Result<()> {
         None
     };
     println!("{}", serde_json::json!({"event":"ready"}));
+    // Relays without joining FETCH cannot backfill the current catalog group.
+    // Publish a fresh snapshot periodically so an idle broadcast remains joinable.
+    let refresh = async {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut revision = 0u64;
+        loop {
+            interval.tick().await;
+            revision += 1;
+            if let Err(error) = catalog.modify().and_then(|mut catalog| {
+                catalog.set_section("jmmp", serde_json::json!({"revision": revision}))
+            }) {
+                return Err::<(), anyhow::Error>(error.into());
+            }
+        }
+    };
     let clock = std::time::Instant::now();
     let read = async {
         loop {
@@ -138,9 +166,27 @@ async fn main() -> anyhow::Result<()> {
     };
     let result = tokio::select! {
         result = read => result,
+        result = refresh => result,
         result = &mut running => return result.context("relay task")?,
+        _ = async {
+            match &upstream {
+                Some(connection) => { let _ = connection.closed().await; }
+                None => std::future::pending::<()>().await,
+            }
+        } => Err(anyhow::anyhow!("Upstream MoQ connection stopped")),
+    };
+    drop(audio);
+    drop(catalog);
+    drop(broadcast);
+    let upstream_shutdown = match upstream {
+        Some(upstream) => upstream
+            .close()
+            .await
+            .map_err(|_| anyhow::anyhow!("Upstream MoQ shutdown failed")),
+        None => Ok(()),
     };
     trigger.start();
     running.await.context("relay task")??;
-    result
+    result?;
+    upstream_shutdown
 }
