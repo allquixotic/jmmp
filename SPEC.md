@@ -57,6 +57,10 @@ V25: Playback startup and asynchronous source failures set recoverable player er
 V26: Public now-playing status exposes only selected track title/artist; listener page refreshes metadata before listening and on track changes, preserves paused metadata, and clears idle/ended/error metadata without source audio/control requests.
 V27: Spotify playback resolves a supported, account-available file through bounded, deduplicated alternate track lookups and requests its key with that alternate's ID; failure before audio header reports a fixed useful code while worker stack traces remain visible.
 
+V28: Only typed Spotify unavailability advances the current queue once per attempt; transient/auth failures stay retryable; skipped-track error and full stack remain inspectable after playback continues; finite unavailable queues terminate.
+V29: Live Spotify search reuses saved server credentials, bounds queries/results/timeouts, persists playable catalog IDs and respects source/field filters without a developer app.
+V30: All track tables expose continuous column dividers, mouse/touch/keyboard resizing and header right-click/long-press visibility menus; validated localStorage preferences restore on startup; hidden columns remain recoverable.
+
 ## §T TASKS
 id|status|task|cites
 --|--|--|--
@@ -76,6 +80,10 @@ T13|x|single-use passkey invitation URL/QR, authenticated management, recipient 
 T14|x|repair packaged Spotify worker helper lookup and visible playback errors; verify, publish and deploy|V8,V10,V24,V25,I.helper,I.spotify,I.playback
 T15|x|public listener current track/artist display; verify, publish and deploy|V10,V11,V15,V26,I.public,I.playback
 T16|x|repair Spotify alternate track playback and stream startup error codes; verify, publish and deploy|V10,V13,V24,V25,V27,I.spotify,I.helper
+
+T17|x|typed unavailable Spotify skipping and retained playback diagnostics|V10,V25,V27,V28,I.playback,I.spotify
+T18|.|saved-account live Spotify search|V10,V13,V29,I.spotify
+T19|.|shared resizable/hideable table columns with persisted browser preferences|V10,V30
 
 ## §B BUGS
 id|date|cause|fix

@@ -148,7 +148,8 @@ export class PlaybackController {
     }
     catch (error) { await this.shutdown(); throw error; }
   }
-  private fail(error: string) {
+  private fail(error: string, errorCode?: PlaybackStatus["errorCode"]) {
+    this.status.errorCode = errorCode;
     this.error = error; this.status.error = error; this.status.state = "error"; this.status.revision++; this.status.generation++;
     this.worker?.terminate(); this.worker = undefined;
   }
@@ -187,7 +188,7 @@ export class PlaybackController {
     this.worker?.terminate(); this.worker = undefined; this.status.generation++;
     const generation = this.status.generation;
     await this.helper!.write(1, generation);
-    this.status.position = position; this.status.state = paused ? "paused" : "buffering"; this.status.error = null;
+    this.status.position = position; this.status.state = paused ? "paused" : "buffering"; this.status.error = null; delete this.status.errorCode;
     const worker = this.worker = new Worker(this.helper!.workerPath);
     worker.onerror = event => { if (generation === this.status.generation) this.fail(event.message); };
     worker.onmessage = event => {
@@ -199,14 +200,14 @@ export class PlaybackController {
         if (this.status.state === "buffering") this.status.state = "playing";
       } else if (m.type === "position") { this.status.position = m.position; if (m.duration) this.status.duration = m.duration; }
       else if (m.type === "ended") { this.status.position = m.position; this.status.state = "ended"; this.status.revision++; void this.helper?.write(1, generation).catch(error => { if (generation === this.status.generation) this.fail(String(error)); }); }
-      else if (m.type === "error") this.fail(m.error);
+      else if (m.type === "error") this.fail(m.error, m.errorCode === "spotify_unavailable" ? m.errorCode : undefined);
     };
     worker.postMessage({ type: "start", dataDir: this.ctx.cfg.dataDir, generation, trackId: this.status.trackId, position, paused, params: this.status.params });
   }
   private async stopPlayback() {
     this.worker?.terminate(); this.worker = undefined; this.status.generation++;
     if (this.running) await this.helper!.write(1, this.status.generation);
-    this.status.state = "idle"; this.status.trackId = null; this.status.position = 0; this.status.error = null;
+    this.status.state = "idle"; this.status.trackId = null; this.status.position = 0; this.status.error = null; delete this.status.errorCode;
   }
   async shutdown() {
     clearTimeout(this.testTimer); await this.stopPlayback(); await this.helper?.close(); this.helper = undefined;

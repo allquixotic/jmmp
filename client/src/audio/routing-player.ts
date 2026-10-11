@@ -19,7 +19,7 @@ export class RoutingPlayer extends EventTarget {
   private playEpoch = 0;
   constructor() {
     super();
-    for (const backend of [this.local, this.moq]) for (const name of ["state", "position", "error"]) backend.addEventListener(name, event => {
+    for (const backend of [this.local, this.moq]) for (const name of ["state", "position", "error", "unavailable"]) backend.addEventListener(name, event => {
       if (this.active !== backend || this.switching) return;
       const detail = (event as CustomEvent).detail;
       if (name === "position") this.position = detail.position;

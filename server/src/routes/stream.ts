@@ -1,9 +1,10 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
-import { fail, get, type Req } from "../router.ts";
+import { fail, get, json, type Req } from "../router.ts";
 import { playbackController } from "../audio/controller.ts";
 import { requireFullSession } from "../session.ts";
+import { SpotifySourceError } from "../sources/spotify.ts";
 import { loadAdapter } from "../sources/index.ts";
 
 interface TrackRow {
@@ -31,7 +32,12 @@ get("/api/stream/:track_id", async (req: Req) => {
   if (!adapter) return fail("source not found or not server-fetchable", 404);
 
   const range = parseRange(req.request.headers.get("range"));
-  const upstream = await adapter.adapter.fetch(track.source_track_id, range);
+  const upstream = await adapter.adapter.fetch(track.source_track_id, range).catch(error => {
+    if (!(error instanceof SpotifySourceError)) throw error;
+    return json({ ok: false, code: error.code === "unavailable" ? "spotify_unavailable" : "spotify_source",
+      error: error.stack ?? error.message }, { status: error.code === "unavailable" ? 404 : 502 });
+  });
+  if (upstream instanceof Response) return upstream;
   // Enabling output can race an upstream request that has not returned yet.
   if (!playbackController(req.ctx).browserStreamingAllowed) {
     await upstream.body.cancel().catch(() => {});

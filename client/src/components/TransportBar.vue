@@ -5,9 +5,7 @@
 
 <template>
   <div class="transport-bar" :class="{ compact, 'has-tabbar': compact }">
-    <q-banner v-if="player.error" role="alert" class="bg-red-1 text-red-10" dense rounded>
-      {{ player.error }}
-    </q-banner>
+    <PlaybackDiagnostics />
     <!-- Compact pill (mobile): only art + title + play. Tap to expand. -->
     <div v-if="compact" class="pill" @click="$emit('open-now-playing')">
       <div class="now-art">
@@ -122,6 +120,7 @@
 </template>
 
 <script setup lang="ts">
+import PlaybackDiagnostics from "./PlaybackDiagnostics.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { usePlayerStore } from "src/stores/player";
 import { useQueueStore } from "src/stores/queue";

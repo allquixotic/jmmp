@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CachePolicy, Track } from "@jmmp/shared";
+import { UnavailableTrackError, playbackErrorText } from "./playback-error";
 import { SoundTouchNode } from "./soundtouch-node";
 import { createDecoder, type DecodedChunk, type StreamingDecoder } from "./decoders";
 import { planSeek } from "./seek";
@@ -116,7 +117,9 @@ export class AudioPlayer extends EventTarget {
       return;
     }
     const seek = planSeek(track, targetSeconds);
-    const stream = await openStreamForTrack(track, seek.startByte, this.cacheOptions);
+    const stream = await openStreamForTrack(track, seek.startByte, this.cacheOptions).catch(async error => {
+      await decoder.destroy().catch(() => {}); throw error;
+    });
     if (generation !== this.playbackGeneration) {
       await decoder.destroy().catch(() => {});
       await stream.cancel().catch(() => {});
@@ -185,7 +188,7 @@ export class AudioPlayer extends EventTarget {
         if (!abort.signal.aborted && this.playback === playback) this.setState("ended");
       } catch (err) {
         if (abort.signal.aborted || this.playback !== playback) return;
-        const message = err instanceof Error ? err.message : String(err);
+        const message = playbackErrorText(err);
         this.dispatchEvent(new CustomEvent("error", { detail: message }));
         this.setState("error");
       } finally {
@@ -287,7 +290,11 @@ async function openStreamForTrack(
   const headers: Record<string, string> = {};
   if (startByte > 0) headers.Range = `bytes=${startByte}-`;
   const resp = await fetch(`/api/stream/${track.id}`, { credentials: "include", headers });
-  if (!resp.ok) throw new Error(`Stream request failed: HTTP ${resp.status}`);
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null) as { code?: string; error?: string } | null;
+    if (body?.code === "spotify_unavailable") throw new UnavailableTrackError(body.error ?? "Spotify track unavailable", body.error);
+    throw new Error(body?.error ?? `Stream request failed: HTTP ${resp.status}`);
+  }
   if (!resp.body) throw new Error("Stream response has no body");
   return maybeCacheStream(track, resp.body, startByte, cacheOptions);
 }

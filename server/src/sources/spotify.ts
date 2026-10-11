@@ -19,10 +19,11 @@ const SPOTIFY_ERRORS: Record<string, string> = {
   unavailable: "Spotify track is unavailable for this account in a supported audio format",
   audio_key: "Spotify could not authorize this track's audio; try again or reconnect the source",
   download: "Spotify audio download failed; check the connection and try again",
+  lookup: "Spotify track lookup failed; check the connection and try again",
   timeout: "Spotify track lookup timed out; try again",
 };
 export class SpotifySourceError extends Error {
-  constructor(code: string) {
+  constructor(readonly code: string) {
     super(Object.hasOwn(SPOTIFY_ERRORS, code) ? SPOTIFY_ERRORS[code]! : "Spotify source failed; reconnect or check track availability");
     this.name = "SpotifySourceError";
   }

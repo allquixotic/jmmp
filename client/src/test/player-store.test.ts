@@ -10,6 +10,8 @@ import {
   usePlayerStore,
 } from "../stores/player";
 import { useSourcesStore } from "../stores/sources";
+import { useQueueStore } from "../stores/queue";
+import { UnavailableTrackError } from "../audio/playback-error";
 import type { PlayerState } from "../audio/pipeline";
 
 class FakePlayerBackend extends EventTarget {
@@ -69,7 +71,8 @@ describe("player store", () => {
     try {
       await player.play(track);
       expect(player.state).toBe("error");
-      expect(player.error).toBe("Spotify source unavailable");
+      expect(player.error).toContain("Spotify source unavailable");
+      expect(player.error).toContain("Error:");
       expect(player.current?.id).toBe(track.id);
       failure.mockResolvedValue();
       await player.toggle();
@@ -200,3 +203,56 @@ const track: Track = {
   durationMs: 120_000,
   codec: "mp3",
 };
+
+
+describe("V28 Spotify unavailable skipping", () => {
+  function setup(ids: number[]) {
+    setActivePinia(createPinia());
+    const fake = new FakePlayerBackend();
+    restorePlayer = installPlayerBackendForTest(fake);
+    useSourcesStore().loaded = true;
+    const queue = useQueueStore();
+    queue.entries = ids.map((id, position) => ({ position, addedAt: 0, track: { ...track, id } }));
+    queue.index = 0;
+    return { fake, queue, player: usePlayerStore() };
+  }
+  test("typed unavailable startup skips consecutive failures and preserves full stacks", async () => {
+    const { fake, player, queue } = setup([7, 8, 9]);
+    const start = spyOn(fake, "play").mockImplementation(async track => {
+      if (track.id !== 9) throw new UnavailableTrackError("unavailable", `SpotifySourceError: unavailable\n    at fetch(worker.ts:21)`);
+    });
+    try {
+      await player.play(track);
+      expect(start.mock.calls.map(call => call[0].id)).toEqual([7, 8, 9]);
+      expect(queue.index).toBe(2);
+      expect(player.diagnostics).toHaveLength(2);
+      expect(player.diagnostics[0]?.error).toContain("at fetch(worker.ts:21)");
+      expect(player.error).toBeNull();
+    } finally { start.mockRestore(); }
+  });
+  test("asynchronous unavailable status advances once, ignores stale tracks and stops at queue end", async () => {
+    const { fake, player, queue } = setup([7, 8]);
+    await player.play(track);
+    const event = (id: number) => fake.dispatchEvent(new CustomEvent("unavailable", { detail: { trackId: id, error: "stack" } }));
+    event(7); event(7);
+    await Bun.sleep(5);
+    expect(queue.index).toBe(1);
+    expect(fake.playCalls.map(call => call.track.id)).toEqual([7, 8]);
+    event(8); event(8);
+    await Bun.sleep(5);
+    expect(player.state).toBe("error");
+    expect(player.error).toBe("stack");
+    expect(player.diagnostics).toHaveLength(2);
+    expect(fake.playCalls).toHaveLength(2);
+  });
+  test("auth/network/decoder failures are retryable and never skip", async () => {
+    const { fake, player, queue } = setup([7, 8]);
+    const start = spyOn(fake, "play").mockRejectedValue(new Error("Spotify login failed"));
+    try {
+      await player.play(track);
+      expect(queue.index).toBe(0);
+      expect(player.state).toBe("error");
+      expect(player.diagnostics).toHaveLength(0);
+    } finally { start.mockRestore(); }
+  });
+});

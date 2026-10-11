@@ -65,7 +65,7 @@ await Bun.write(Bun.stdout, Buffer.concat([header, bytes]));\n`);
     const failure = await new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Bundled worker did not report source failure")), 8000);
       worker!.onmessage = event => {
-        if (event.data.type === "error" && event.data.generation === 2) { clearTimeout(timeout); resolve(event.data.error); }
+        if (event.data.type === "error" && event.data.generation === 2) { clearTimeout(timeout); expect(event.data.errorCode).toBe("spotify_unavailable"); resolve(event.data.error); }
       };
       worker!.postMessage({type:"start",dataDir,trackId:2,generation:2,position:0,paused:false,params:DEFAULT_DSP_PARAMS});
     });

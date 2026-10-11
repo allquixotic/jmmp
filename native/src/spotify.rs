@@ -46,6 +46,7 @@ where
 {
     let mut pending = VecDeque::from([uri]);
     let mut visited = HashSet::new();
+    let mut lookup_error = None;
     while let Some(uri) = pending.pop_front() {
         if visited.len() >= MAX_TRACK_LOOKUPS {
             break;
@@ -55,10 +56,14 @@ where
         }
         let item = match load(uri).await {
             Ok(item) => item,
-            Err(error) if visited.len() == 1 => {
-                return Err(error.context("Spotify track unavailable"));
+            Err(error) => {
+                // Service/auth failures are not evidence that a song is unavailable.
+                if !error.downcast_ref::<librespot_core::Error>()
+                    .is_some_and(|e| e.kind == librespot_core::error::ErrorKind::NotFound) {
+                    lookup_error = Some(error);
+                }
+                continue;
             }
-            Err(_) => continue,
         };
         if item.availability.is_ok()
             && let SpotifyUri::Track { id } = item.track_id
@@ -76,6 +81,12 @@ where
         if let Some(alternatives) = item.alternatives {
             pending.extend(alternatives.0.into_iter().take(MAX_TRACK_LOOKUPS));
         }
+    }
+    if let Some(error) = lookup_error {
+        return Err(error.context("Spotify track lookup failed"));
+    }
+    if pending.iter().any(|uri| !visited.contains(uri)) {
+        bail!("Spotify track lookup failed");
     }
     bail!("Spotify track has no available Vorbis audio")
 }
@@ -160,6 +171,7 @@ fn error_code(error: &anyhow::Error) -> &'static str {
             "Spotify audio key request failed" => return "audio_key",
             "Spotify audio download failed" => return "download",
             "Spotify track lookup timed out" => return "timeout",
+            "Spotify track lookup failed" => return "lookup",
             _ => {}
         }
     }
@@ -443,6 +455,14 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert_eq!(lookups, MAX_TRACK_LOOKUPS);
+    }
+    #[tokio::test]
+    async fn v28_transient_metadata_failure_is_not_track_unavailability() {
+        let uri = SpotifyUri::from_uri("spotify:track:4WFeJTXNHIS2wURtwlAkhu").unwrap();
+        let result = resolve_audio_track(uri, |_| std::future::ready(Err(
+            librespot_core::Error::unavailable("service offline").into()
+        ))).await.unwrap_err();
+        assert_eq!(error_code(&result), "lookup");
     }
     #[test]
     fn v27_stream_failures_have_fixed_safe_error_codes() {

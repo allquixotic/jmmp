@@ -69,6 +69,7 @@ export interface PlaybackStatus {
   position: number; duration: number;
   state: "idle" | "buffering" | "playing" | "paused" | "ended" | "error";
   params: DspParams; error: string | null;
+  errorCode?: "spotify_unavailable";
 }
 export interface NowPlayingTrack { title: string | null; artist: string | null }
 export interface ListenerPlaybackStatus extends PlaybackStatus { nowPlaying: NowPlayingTrack | null }

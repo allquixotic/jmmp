@@ -57,9 +57,11 @@ export class MoqPlayer extends EventTarget {
   private retry: ReturnType<typeof setTimeout> | undefined;
   private retryDelay = 500;
   private pollBusy = false;
+  private playPending = 0;
   private lastRevision: number | undefined;
   private lastStatus: PlaybackStatus | undefined;
   private ended = "";
+  private unavailable = "";
   private opening: Promise<void> | undefined;
   private pollAbort?: AbortController;
   private cleanups: Array<() => void> = [];
@@ -113,8 +115,11 @@ export class MoqPlayer extends EventTarget {
   }
   async play(track: Track) { await this.playAt(track, 0); }
   async playAt(track: Track, position: number, paused = false) {
-    const mine = this.epoch; await this.listen();
-    if (mine === this.epoch) await this.send({ type: "play", trackId: track.id, position, paused, params: this.params });
+    this.playPending++;
+    try {
+      const mine = this.epoch; await this.listen();
+      if (mine === this.epoch) await this.send({ type: "play", trackId: track.id, position, paused, params: this.params });
+    } finally { this.playPending--; }
   }
   private send(command: PlaybackCommand): Promise<void> {
     if (this.publicListener) return Promise.reject(new Error("Public listeners cannot control playback"));
@@ -133,7 +138,7 @@ export class MoqPlayer extends EventTarget {
     if (this.pollBusy) return; this.pollBusy = true;
     const mine = this.epoch;
     const abort = this.pollAbort = new AbortController();
-    try { const status = await api.get<PlaybackStatus>(this.publicListener ? "/api/public/moq/status" : "/api/playback", { signal: abort.signal }); if (mine === this.epoch) this.apply(status); }
+    try { const status = await api.get<PlaybackStatus>(this.publicListener ? "/api/public/moq/status" : "/api/playback", { signal: abort.signal }); if (mine === this.epoch && !this.playPending) this.apply(status); }
     catch (error) { if (mine === this.epoch) this.error(error); }
     finally { this.pollBusy = false; }
   }
@@ -146,13 +151,18 @@ export class MoqPlayer extends EventTarget {
       (status.generation < previous.generation || status.revision < previous.revision)) return;
     this.lastStatus = status;
     this.paused?.set(["paused", "idle", "ended", "error"].includes(status.state));
-    if (status.revision !== this.lastRevision) { this.lastRevision = status.revision; if (status.error) this.error(status.error); }
+    if (previous?.instanceId !== status.instanceId || status.revision !== this.lastRevision) { this.lastRevision = status.revision; if (status.error) this.error(status.error); }
     this.dispatchEvent(new CustomEvent("position", { detail: { position: status.position, duration: status.duration } }));
     if (status.state === "ended") {
       const ended = String(status.instanceId) + ":" + status.generation;
       if (this.ended === ended) return; this.ended = ended;
     }
     this.dispatchEvent(new CustomEvent("state", { detail: status.state === "buffering" ? "loading" : status.state }));
+    const failure = `${status.instanceId}:${status.generation}`;
+    if (!this.publicListener && status.state === "error" && status.errorCode === "spotify_unavailable" && status.trackId !== null && this.unavailable !== failure) {
+      this.unavailable = failure;
+      this.dispatchEvent(new CustomEvent("unavailable", { detail: { trackId: status.trackId, error: status.error } }));
+    }
   }
   pause() { void this.send({ type: "pause" }).catch(() => {}); }
   resume() { void this.send({ type: "resume" }).catch(() => {}); }

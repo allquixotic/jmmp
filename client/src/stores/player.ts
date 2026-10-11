@@ -4,6 +4,7 @@
 import { defineStore } from "pinia";
 import type { Track } from "@jmmp/shared";
 import { AudioPlayer, cacheTrack, type PlayerState } from "src/audio/pipeline";
+import { UnavailableTrackError, playbackErrorText, type UnavailableTrackEvent } from "src/audio/playback-error";
 import { RoutingPlayer } from "src/audio/routing-player";
 import { computeGainDb } from "src/audio/replaygain";
 import { useSettingsStore } from "./settings";
@@ -44,6 +45,9 @@ interface State {
   volume: number;
   pinned: Record<string, boolean>;
   moqEnabled: boolean;
+  attempt: number;
+  skippedAttempt: number;
+  diagnostics: Array<{ trackId: number; title: string; artist: string; error: string; at: number; skipped: boolean }>;
 }
 
 export const usePlayerStore = defineStore("player", {
@@ -56,6 +60,7 @@ export const usePlayerStore = defineStore("player", {
     volume: 1,
     pinned: {},
     moqEnabled: false,
+    attempt: 0, skippedAttempt: -1, diagnostics: [],
   }),
   getters: {
     currentPinned: (state): boolean =>
@@ -80,9 +85,14 @@ export const usePlayerStore = defineStore("player", {
       player.addEventListener("error", (e) => {
         this.error = (e as CustomEvent).detail;
       });
+      player.addEventListener("unavailable", (e) => {
+        const detail = (e as CustomEvent<UnavailableTrackEvent>).detail;
+        if (detail.trackId === this.current?.id) void this.skipUnavailable(detail.error);
+      });
       return player;
     },
     async play(track: Track): Promise<void> {
+      const attempt = ++this.attempt;
       this.current = track;
       this.position = 0;
       this.duration = track.durationMs / 1000;
@@ -97,18 +107,33 @@ export const usePlayerStore = defineStore("player", {
           settings.settings.replayGainMode,
           settings.settings.replayGainPreampDb
         );
+        if (attempt !== this.attempt) return;
         this.ensure().setParams({ gainDb });
         const pinned = await this.loadPinState(track.id);
+        const policy = await this.cachePolicyFor(track.sourceId);
+        if (attempt !== this.attempt) return;
         await this.ensure().play(track, {
-          policy: await this.cachePolicyFor(track.sourceId),
+          policy,
           pinned,
           capBytes: settings.settings.opfsCacheCapBytes,
         });
       } catch (error) {
-        this.error = error instanceof Error ? error.message : String(error);
+        if (attempt !== this.attempt) return;
+        this.error = playbackErrorText(error);
         this.state = "error";
         setPlaybackWakeLockActive(false);
+        if (error instanceof UnavailableTrackError) await this.skipUnavailable(this.error);
       }
+    },
+    async skipUnavailable(error: string): Promise<void> {
+      if (!this.current || this.skippedAttempt === this.attempt) return;
+      this.skippedAttempt = this.attempt;
+      this.diagnostics.unshift({ trackId: this.current.id, title: this.current.title ?? "Untitled",
+        artist: this.current.artist ?? "", error, at: Date.now(), skipped: true });
+      this.diagnostics.splice(50);
+      const next = useQueueStore().next();
+      if (next) await this.play(next);
+      else { this.state = "error"; this.error = error; setPlaybackWakeLockActive(false); }
     },
     pause(): void {
       this.ensure().pause();
@@ -129,6 +154,7 @@ export const usePlayerStore = defineStore("player", {
       }
     },
     stop(): void {
+      this.attempt++;
       this.ensure().stop();
       setPlaybackWakeLockActive(false);
       this.current = null;

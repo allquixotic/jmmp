@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { AudioDsp } from "@jmmp/shared/audio/dsp";
 import { createDecoder, type DecodedChunk } from "@jmmp/shared/audio/decoders";
 import type { Codec, DspParams } from "@jmmp/shared";
+import { SpotifySourceError } from "../sources/spotify.ts";
 import { loadAdapter } from "../sources/index.ts";
 import { loadOrInitMachineKey } from "../crypto.ts";
 
@@ -24,7 +25,7 @@ self.onmessage = e => {
     generation = m.generation; cancelled?.(); ack?.(); ack = undefined;
     if (m.type === "stop") return;
     paused = !!m.paused; params = m.params;
-    void play(m).catch(error => { if (m.generation === generation) self.postMessage({ type: "error", generation, error: error instanceof Error ? error.stack ?? error.message : String(error) }); });
+    void play(m).catch(error => { if (m.generation === generation) self.postMessage({ type: "error", generation, errorCode: error instanceof SpotifySourceError && error.code === "unavailable" ? "spotify_unavailable" : undefined, error: error instanceof Error ? error.stack ?? error.message : String(error) }); });
   } else if (m.type === "params") { params = m.params; applyParams(); }
   else if (m.type === "pause") paused = m.paused;
 };

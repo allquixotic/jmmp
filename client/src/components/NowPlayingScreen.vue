@@ -25,9 +25,7 @@
               <div class="np-title">{{ player.current?.title || "—" }}</div>
               <div class="np-artist">{{ player.current?.artist || "" }}</div>
               <div class="np-album">{{ player.current?.album || "" }}</div>
-              <q-banner v-if="player.error" role="alert" class="bg-red-1 text-red-10 q-mt-md" dense rounded>
-                {{ player.error }}
-              </q-banner>
+              <PlaybackDiagnostics />
 
               <div class="np-scrubber">
                 <span class="time-label mono">{{ formatTime(player.position) }}</span>
@@ -152,6 +150,7 @@
 </template>
 
 <script setup lang="ts">
+import PlaybackDiagnostics from "./PlaybackDiagnostics.vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePlayerStore } from "src/stores/player";
 import { useQueueStore } from "src/stores/queue";
