@@ -60,9 +60,9 @@ async function finishSignIn(req: Req, entry: Pending, code: string | null): Prom
     entry.sourceId = Number(insert.lastInsertRowid);
     entry.status = "complete";
     entry.verifier = "";
-    void runScan(req.ctx.db, req.ctx.machineKey, entry.sourceId, { extractMetadata: false });
+    if (entry.uris.length) void runScan(req.ctx.db, req.ctx.machineKey, entry.sourceId, { extractMetadata: false });
     if (entry.manualCallback) return ok({ status: "complete", sourceId: entry.sourceId });
-    return new Response('<!doctype html><html><head><meta charset="utf-8"><title>Spotify connected</title></head><body><h1>Spotify connected</h1><p>Return to jmmp. Your music is being indexed.</p></body></html>', {
+    return new Response('<!doctype html><html><head><meta charset="utf-8"><title>Spotify connected</title></head><body><h1>Spotify connected</h1><p>Return to jmmp. Import playlist URLs from Playlists whenever you like.</p></body></html>', {
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
   } catch {
@@ -77,7 +77,7 @@ post("/api/sources/spotify/oauth/start", async req => {
   if (session instanceof Response) return session;
   cleanup();
   try {
-    const body = await readJson<{ clientId?: unknown; sourceName?: string; uris: string[] }>(req);
+    const body = await readJson<{ clientId?: unknown; sourceName?: string; uris?: unknown }>(req);
     if (body.clientId !== undefined && typeof body.clientId !== "string") return fail("Invalid Spotify application client ID");
     const customClientId = body.clientId?.trim();
     if (customClientId && !/^[a-fA-F0-9]{32}$/.test(customClientId)) return fail("Invalid Spotify application client ID");
@@ -91,7 +91,8 @@ post("/api/sources/spotify/oauth/start", async req => {
     const entry: Pending = {
       did: session.did, jti: session.jti, created: Date.now(),
       clientId: customClientId || LIBRESPOT_CLIENT_ID, redirectUri, manualCallback, verifier,
-      uris: normalizeSpotifyUris(body.uris), name: body.sourceName?.trim().slice(0, 200) || "Spotify", status: "pending",
+      uris: body.uris === undefined || Array.isArray(body.uris) && !body.uris.length ? [] : normalizeSpotifyUris(body.uris),
+      name: body.sourceName?.trim().slice(0, 200) || "Spotify", status: "pending",
     };
     pending.set(state, entry);
     const url = new URL("https://accounts.spotify.com/authorize");

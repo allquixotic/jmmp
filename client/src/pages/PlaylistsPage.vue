@@ -11,6 +11,7 @@
       view-toggle
     >
       <template v-slot:actions>
+        <q-btn flat icon="download" label="Import Spotify playlist" @click="spotifyImportOpen = true" />
         <q-btn unelevated color="primary" icon="add" label="New playlist" @click="onCreate" />
       </template>
     </PageHero>
@@ -26,6 +27,8 @@
       :empty-label="filter ? `No playlists match '${filter}'.` : 'No playlists yet. Tap “New playlist” to create one.'"
       @menu-action="onMenuAction"
     />
+
+    <ImportSpotifyPlaylistDialog v-model="spotifyImportOpen" @imported="onImported" />
 
     <q-dialog v-model="storageDialogOpen">
       <q-card class="playlist-dialog">
@@ -94,6 +97,7 @@ import { usePlaylistsStore } from "src/stores/playlists";
 import { useSourcesStore } from "src/stores/sources";
 import PageHero from "src/components/PageHero.vue";
 import ListFilter from "src/components/ListFilter.vue";
+import ImportSpotifyPlaylistDialog from "src/components/ImportSpotifyPlaylistDialog.vue";
 import PlaylistList, {
   type PlaylistMenuAction,
 } from "src/components/PlaylistList.vue";
@@ -107,6 +111,7 @@ const filter = ref("");
 const targetPlaylist = ref<Playlist | null>(null);
 const infoOpen = ref(false);
 const storageDialogOpen = ref(false);
+const spotifyImportOpen = ref(false);
 const selectedStorageSource = ref<number | "local">("local");
 
 onMounted(async () => {
@@ -130,6 +135,10 @@ const storageOptions = computed(() => [
     .filter((source) => source.kind === "qobuz")
     .map((source) => ({ label: source.name, value: source.id })),
 ]);
+
+async function onImported(playlist: Playlist): Promise<void> {
+  await router.push({ name: "playlist", params: { id: String(playlist.id) } });
+}
 
 async function onCreate(): Promise<void> {
   const name = window.prompt("Playlist name:");

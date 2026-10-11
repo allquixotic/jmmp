@@ -100,6 +100,7 @@ export function makeSpotifyAdapter(db: Database, key: CryptoKey, sourceId: numbe
   }
   return {
     async *scan(ctx) {
+      if (!config.uris.length) return;
       const pipe = await open("metadata", { uris: normalizeSpotifyUris(config.uris) });
       const abort = () => pipe.close(); ctx.signal?.addEventListener("abort", abort, { once: true });
       const tracks = new Map<string, Omit<Track, "id">>();

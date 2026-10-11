@@ -139,17 +139,17 @@ test("V14 Spotify built-in login exchanges PKCE once and saves encrypted refresh
     return Response.json({access_token:"private-access",refresh_token:"private-refresh",expires_in:3600});
   },{preconnect:fetch.preconnect}));
   try{
-    const start=await call("/api/sources/spotify/oauth/start",{clientId:"",uris:[uri],sourceName:"My Spotify"});
+    const start=await call("/api/sources/spotify/oauth/start",{clientId:"",sourceName:"My Spotify"});
     const result=(await start.json() as {data:{state:string;authUrl:string;redirectUri:string}}).data;
     challenge=new URL(result.authUrl).searchParams.get("code_challenge")!;
     const callback=new URL(result.redirectUri);callback.search=new URLSearchParams({state:result.state,code:"test-code"}).toString();
     const body={state:result.state,redirectUrl:callback.href};
     const responses=await Promise.all([call("/api/sources/spotify/oauth/complete",body),call("/api/sources/spotify/oauth/complete",body)]);
     expect(responses.map(r=>r.status).sort()).toEqual([200,400]);
-    expect(token).toHaveBeenCalledTimes(1);expect(scan).toHaveBeenCalledTimes(1);
+    expect(token).toHaveBeenCalledTimes(1);expect(scan).not.toHaveBeenCalled();
     const row=db.query<{id:number;name:string;config_json:string;creds_encrypted:Uint8Array;fetch_mode:string},[]>("SELECT id,name,config_json,creds_encrypted,fetch_mode FROM sources").get()!;
     expect(row.name).toBe("My Spotify");expect(row.fetch_mode).toBe("proxy");
-    expect(JSON.parse(row.config_json)).toEqual({kind:"spotify",clientId:"65b708073fc0480ea92a077233ca87bd",redirectUri:result.redirectUri,uris:[uri]});
+    expect(JSON.parse(row.config_json)).toEqual({kind:"spotify",clientId:"65b708073fc0480ea92a077233ca87bd",redirectUri:result.redirectUri,uris:[]});
     expect(new TextDecoder().decode(row.creds_encrypted)).not.toContain("private-access");
     expect(new TextDecoder().decode(row.creds_encrypted)).not.toContain("private-refresh");
     const secrets=await decryptJson<SourceSecrets>(ctx.machineKey,row.creds_encrypted);

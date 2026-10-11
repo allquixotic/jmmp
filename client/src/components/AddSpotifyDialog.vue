@@ -5,8 +5,8 @@
       <q-card-section><div class="text-h6">Add Spotify</div></q-card-section>
       <q-card-section class="q-gutter-md">
         <p>Sign in to your Spotify Premium account. You do not need to create a developer application.</p>
+        <p>Connect your account once. You can import playlist URLs later from Playlists.</p>
         <q-input v-model="name" label="Source name" :disable="!!state" />
-        <q-input v-model="links" type="textarea" label="Track, album or playlist links (one per line)" :disable="!!state" />
         <q-expansion-item v-if="!state" label="Advanced: use your own Spotify application" dense>
           <div class="q-gutter-md q-pa-sm">
             <p>Optional: enter your application's client ID and register this redirect URI in the Spotify developer dashboard.</p>
@@ -37,7 +37,7 @@ import { api } from "src/api";
 
 const model = defineModel<boolean>({ required: true });
 const emit = defineEmits<{ added: [] }>();
-const name = ref("Spotify"), clientId = ref(""), links = ref(""), error = ref<string | null>(null);
+const name = ref("Spotify"), clientId = ref(""), error = ref<string | null>(null);
 const state = ref(""), authUrl = ref(""), working = ref(false), manualCallback = ref(true), redirectUrl = ref("");
 const customRedirectUri = `${window.location.origin}/api/sources/spotify/oauth/callback`;
 let poll: ReturnType<typeof setInterval> | undefined;
@@ -79,7 +79,6 @@ async function submit() {
     const customId = clientId.value.trim();
     const result = await api.post<{ state: string; authUrl: string; manualCallback: boolean }>("/api/sources/spotify/oauth/start", {
       sourceName: name.value, ...(customId ? { clientId: customId } : {}),
-      uris: links.value.split(/\n/).map(x => x.trim()).filter(Boolean),
     });
     state.value = result.state; authUrl.value = result.authUrl; manualCallback.value = result.manualCallback;
     if (popup) popup.location.href = result.authUrl;

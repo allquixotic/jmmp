@@ -24,6 +24,17 @@ export const usePlaylistsStore = defineStore("playlists", {
       this.playlists = sortPlaylists([...this.playlists, p]);
       return p;
     },
+    async importSpotify(sourceId: number, url: string): Promise<Playlist> {
+      const { jobId } = await api.post<{ jobId: string }>("/api/playlists/import/spotify", { sourceId, url });
+      for (;;) {
+        const result = await api.get<{ status: "pending" } | { status: "complete"; playlist: Playlist }>(`/api/playlists/import/spotify/${encodeURIComponent(jobId)}`);
+        if (result.status === "complete") {
+          this.playlists = sortPlaylists([...this.playlists.filter(p => p.id !== result.playlist.id), result.playlist]);
+          return result.playlist;
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    },
     async get(id: number): Promise<PlaylistWithTracks> {
       return api.get<PlaylistWithTracks>(`/api/playlists/${id}`);
     },

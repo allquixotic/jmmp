@@ -14,9 +14,12 @@ test("Spotify default sign-in needs only an account and completes the pasted red
   await page.getByRole("button", { name: "Add source" }).click();
   await page.getByText("Spotify", { exact: true }).click();
   const dialog = page.getByRole("dialog");
+  let oauthStarts = 0;
+  page.on("request", request => { if (request.url().endsWith("/api/sources/spotify/oauth/start")) oauthStarts++; });
   await expect(dialog.getByText("You do not need to create a developer application.", { exact: false })).toBeVisible();
   await expect(dialog.getByLabel("Application client ID (optional)")).not.toBeVisible();
-  await dialog.getByLabel("Track, album or playlist links (one per line)").fill("https://open.spotify.com/track/5sWHDYs0csV6RS48xBl0tH");
+  await expect(dialog.getByText("Connect your account once.", { exact: false })).toBeVisible();
+  await expect(dialog.getByLabel("Track, album or playlist links (one per line)")).toHaveCount(0);
 
   // Spotify itself is outside this UI test. Use the real jmmp start endpoint,
   // then replace the external provider and token completion at their boundaries.
@@ -24,7 +27,9 @@ test("Spotify default sign-in needs only an account and completes the pasted red
   const startRequest = page.waitForRequest(request => request.url().endsWith("/api/sources/spotify/oauth/start"));
   const popupPromise = page.waitForEvent("popup");
   await dialog.getByRole("button", { name: "Sign in to Spotify", exact: true }).click();
-  expect((await startRequest).postDataJSON()).not.toHaveProperty("clientId");
+  const startBody = (await startRequest).postDataJSON();
+  expect(startBody).not.toHaveProperty("clientId");
+  expect(startBody).not.toHaveProperty("uris");
   const popup = await popupPromise;
   await popup.waitForURL("https://accounts.spotify.com/authorize?**");
   const authUrl = new URL(popup.url());
@@ -43,4 +48,37 @@ test("Spotify default sign-in needs only an account and completes the pasted red
   await dialog.getByRole("button", { name: "Finish connection" }).click();
   await expect(dialog).not.toBeVisible();
   await popup.close();
+
+  // Playlist import is a separate UI flow, with no second account sign-in.
+  await page.getByRole("link", { name: "All playlists", exact: true }).click();
+  await expect(page).toHaveURL(/\/playlists$/);
+  await page.getByRole("button", { name: "Import Spotify playlist", exact: true }).click();
+  await expect(dialog.getByText("Connect your Spotify account in Sources first.", { exact: false })).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.route("**/api/sources", route => route.fulfill({ json: { ok: true, data: { sources: [{
+    id: 1, kind: "spotify", name: "My Spotify", config: { kind: "spotify", clientId: "65b708073fc0480ea92a077233ca87bd", redirectUri: "http://127.0.0.1:8898/login", uris: [] },
+    fetchMode: "proxy", cachePolicy: "pin-only", lastScannedAt: null, createdAt: 1,
+  }] } } }));
+  const imported = { id: 42, name: "Imported collection", createdAt: 1, updatedAt: 1, pinnedAt: null, trackCount: 0, storage: { kind: "local", label: "jmmp server" } };
+  let imports = 0;
+  await page.route("**/api/playlists/import/spotify", async route => {
+    expect(route.request().postDataJSON()).toEqual({ sourceId: 1, url: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" });
+    expect(route.request().headers()["x-jmmp-client"]).toBe("1");
+    if (++imports === 1) await route.fulfill({ status: 502, json: { ok: false, error: "Spotify playlist unavailable" } });
+    else await route.fulfill({ status: 202, json: { ok: true, data: { jobId: "ui-import" } } });
+  });
+  await page.route("**/api/playlists/import/spotify/ui-import", route => route.fulfill({ json: { ok: true, data: { status: "complete", playlist: imported } } }));
+  await page.route("**/api/playlists/42", route => route.fulfill({ json: { ok: true, data: { ...imported, tracks: [] } } }));
+  await page.getByRole("button", { name: "Import Spotify playlist", exact: true }).click();
+  await expect(dialog.getByText("Connected as My Spotify", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Import playlist", exact: true })).toBeDisabled();
+  await dialog.getByLabel("Spotify playlist URL", { exact: true }).fill("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M");
+  await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+  await expect(dialog.getByText("Spotify playlist unavailable", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+  await expect(page).toHaveURL(/\/playlists\/42$/);
+  await expect(page.getByRole("main").getByText("Imported collection", { exact: true })).toBeVisible();
+  await expect(page.getByRole("main").locator(".playlist-storage")).toContainText("jmmp server");
+  expect(oauthStarts).toBe(1);
+  expect(imports).toBe(2);
 });

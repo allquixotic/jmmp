@@ -272,15 +272,26 @@ jmmp is licensed under the Apache License, Version 2.0. See `LICENSE`.
 ### Spotify source
 
 Add Spotify from **Sources → Add source → Spotify**. Use a Spotify Premium
-account; no developer application or API key is required. Paste track, album or
-playlist links (one per line), then choose **Sign in to Spotify**. jmmp uses the
+account; no developer application or API key is required. Choose
+**Sign in to Spotify** to connect the account once. jmmp uses the
 same built-in OAuth client as librespot. After signing in, Spotify redirects to
 `http://127.0.0.1:8898/login`. On a remote jmmp server that address may show an
 “Unable to connect” page. Copy the entire final URL from the browser address bar
 into jmmp's **Final redirect URL** field and choose **Finish connection**.
 This is librespot's [headless OAuth flow](https://github.com/librespot-org/librespot/wiki/Options#headless-oauth);
 direct username/password login is no longer supported upstream. The server
-stores encrypted access/refresh credentials and imports the selected collections.
+stores encrypted access/refresh credentials for later imports and playback.
+
+Later, open **Playlists → Import Spotify playlist**, paste a playlist URL and
+choose **Import playlist**. If several Spotify connections are saved, select the
+one to use. jmmp copies the name and ordered tracks into a native, editable
+playlist stored on the jmmp server, preserving duplicates. It does not write
+back to Spotify or bind the new playlist to Qobuz. Changes to Spotify's playlist
+after the import do not change this snapshot; importing again creates a new copy.
+Metadata loads in a background job so large imports work through a tunnel;
+the completed playlist is published atomically, and failures leave no partial
+playlist. Saved credentials refresh automatically; no second sign-in is needed
+unless Spotify revokes the authorization. Audio is fetched only when played.
 
 An existing developer application can instead be used through **Advanced: use
 your own Spotify application**. Register the displayed jmmp callback in the
@@ -288,8 +299,9 @@ your own Spotify application**. Register the displayed jmmp callback in the
 its client ID. This optional flow returns directly to jmmp after sign-in.
 Its registered callback must use HTTPS or an explicit loopback IP;
 `localhost` redirect URIs are not accepted.
-The source's **Rescan** button refreshes those collections; new collections can
-also be added through the source configuration API's `uris` list.
+Existing configured collections remain supported through the source API's
+`uris` list and **Rescan** button. Rescanning keeps tracks imported into native
+jmmp playlists.
 
 Authorization uses [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow).
 Access and refresh tokens remain encrypted on the server. The integrated Rust

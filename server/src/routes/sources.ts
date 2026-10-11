@@ -132,7 +132,7 @@ patch("/api/sources/:id", async (req: Req) => {
     if (body.config !== undefined) {
       const previous = JSON.parse(existing.config_json) as Extract<SourceConfig, { kind: "spotify" }>;
       if (body.config.kind !== "spotify" || body.config.clientId !== previous.clientId || body.config.redirectUri !== previous.redirectUri) return fail("Reconnect Spotify to change application settings");
-      try { body.config = { ...previous, uris: normalizeSpotifyUris(body.config.uris) }; }
+      try { body.config = { ...previous, uris: Array.isArray(body.config.uris) && !body.config.uris.length ? [] : normalizeSpotifyUris(body.config.uris) }; }
       catch (error) { return fail(error instanceof Error ? error.message : "Invalid Spotify links"); }
     }
   }

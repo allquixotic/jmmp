@@ -13,6 +13,7 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - Optional public listener isolated from authenticated control API; outbound managed MoQ publishing hides origin address.
 - Vendored librespot fork preserves upstream license/revision; direct crate dependencies latest stable.
 - Spotify default login uses librespot browser OAuth; no user-created developer app required.
+- Spotify account connection is independent of later playlist URL imports.
 
 ## §I INTERFACES
 - I.output: authenticated `/api/moq` settings/status/test and listener credentials.
@@ -24,6 +25,7 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - I.public: optional separate listener bind serves public player/subscribe credentials; rejects control/auth/source APIs.
 - I.upstream: private publisher URL file, configurable protocol, independent listener WT/WS URLs; credentials never public.
 - I.spotify: authenticated Spotify source provisioning, metadata imports and server-owned decrypted audio via bundled librespot.
+- I.spotify-import: authenticated `/api/playlists/import/spotify` reuses a saved Spotify connection to create a native jmmp playlist from a URL.
 
 ## §V INVARIANTS
 V1: Disabled MoQ spawns no helper, worker, or source fetch.
@@ -41,6 +43,8 @@ V12: Managed relay publisher credential read from private server file, never ret
 V13: Spotify credentials encrypted server-side; source audio fetched only by server through pinned vendored librespot; ordinary cache path and shared DSP remain usable.
 V14: Default Spotify sign-in needs only Premium account; fixed upstream loopback callback accepted through authenticated, session-bound, single-use PKCE completion; custom developer app optional.
 V15: Mutable SPA entry points/service worker revalidate through CDN; only content-hashed bundles immutable; music cache unchanged.
+V16: Spotify sign-in requires no collection URLs; later imports reuse encrypted refresh credentials and atomically create editable local snapshots preserving order/duplicates, without binding to Spotify or Qobuz; rescans retain imported tracks.
+V17: Playlist metadata imports use bounded background jobs and authenticated, session-bound status polling; no long HTTP request through a tunnel, no partial playlist on failure.
 
 ## §T TASKS
 id|status|task|cites
@@ -56,6 +60,7 @@ T8|x|public listener, managed relay publishing and independent transport URLs|V1
 T9|x|vendor librespot, upgrade direct crates and add Spotify source|V3,V8,V10,V13,I.spotify,I.build
 T10|x|publish generic features; deploy isolated public/control services and verify CDN playback|V6,V8,V9,V10,V11,V12,V13,I.public,I.upstream,I.spotify
 T11|x|default Spotify to built-in browser login; verify and deploy|V8,V10,V13,V14,V15,I.spotify,I.build
+T12|x|separate Spotify account connection and native playlist URL import; verify and deploy|V10,V13,V14,V15,V16,V17,I.spotify,I.spotify-import
 
 ## §B BUGS
 id|date|cause|fix
@@ -83,3 +88,6 @@ B20|2026-10-11|Spotify/Qobuz callbacks derived from Bun HTTP scheme fail behind 
 B21|2026-10-11|Spotify GUI requires user-created developer app despite librespot built-in OAuth support|Default upstream client/loopback flow, authenticated pasted callback, optional custom app; state/PKCE/encryption tests (V14)
 B22|2026-10-11|Dev API proxy rewrites Host to backend, failing configured OAuth origin checks|Preserve browser-facing Host; real browser default sign-in regression (V8,V14)
 B23|2026-10-11|Mutable sw.js lacks origin cache policy; CDN minimum browser TTL pins old PWA for four hours|Revalidate entry points, immutable hashed bundles, respect origin headers and purge previously cached worker; freshness regression (V15)
+B24|2026-10-11|New playlist-import test fixture omits WebAuthn origin required by session cookie creation|Provide configured controller origin in authenticated fixtures (V10,V16)
+B25|2026-10-11|Browser test expects an exact text node on a storage label containing an icon|Assert the displayed storage label within its container (V10,V16)
+B26|2026-10-11|Desktop sidebar exposes individual playlists but no link to the playlist index/import page|Add All playlists navigation and exercise it in the import browser test (V16)

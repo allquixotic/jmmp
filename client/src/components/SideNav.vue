@@ -49,6 +49,7 @@
       </NavSection>
 
       <NavSection label="Playlists" :action="onCreatePlaylist" action-icon="add">
+        <NavItem icon="queue_music" label="All playlists" :to="{ name: 'playlists' }" />
         <NavItem
           v-for="p in playlists.playlists"
           :key="p.id"
