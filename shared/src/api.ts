@@ -110,6 +110,14 @@ export interface PlaylistListResponse {
   playlists: Playlist[];
 }
 
+export interface SpotifyPlaylistImportResult {
+  playlist: Playlist;
+  skippedTracks: number;
+}
+export type SpotifyPlaylistImportStatus =
+  | { status: "pending"; tracks: number }
+  | ({ status: "complete" } & SpotifyPlaylistImportResult);
+
 export interface QueueResponse {
   entries: QueueEntry[];
 }

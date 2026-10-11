@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { initDb } from "../db.ts";
 import { loadOrInitMachineKey, encryptJson, decryptJson } from "../crypto.ts";
-import { normalizeSpotifyUris, spotifyAccessToken, SpotifyPipe } from "../sources/spotify.ts";
+import { normalizeSpotifyUris, spotifyAccessToken, SpotifyPipe, SpotifySourceError } from "../sources/spotify.ts";
 import { mintSession } from "../session.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import type { SourceSecrets } from "@jmmp/shared";
@@ -173,4 +173,14 @@ test("Spotify pipe rejects failed downloads instead of treating truncation as EO
   const child=Bun.spawn([process.execPath,"-e",'process.stdout.write("{}\\n");process.exit(1)'],{stdin:"pipe",stdout:"pipe",stderr:"ignore"});
   const pipe=new SpotifyPipe(child);child.stdin.end();
   try{await pipe.line();await expect(new Response(pipe.audio()).arrayBuffer()).rejects.toThrow("Spotify audio download failed");}finally{pipe.close();}
+});
+test("V19 Spotify native errors are mapped to fixed messages rather than raw diagnostics",async()=>{
+  for (const code of ["login", "playlist", "unknown-secret-https://secret.example"]) {
+    const child=Bun.spawn([process.execPath,"-e",`process.stdout.write(JSON.stringify({kind:"error",code:${JSON.stringify(code)},message:"private-refresh"})+"\\n");process.exit(1)`],{stdin:"pipe",stdout:"pipe",stderr:"ignore"});
+    const pipe=new SpotifyPipe(child);
+    try {
+      await expect(pipe.line()).rejects.toThrow(new SpotifySourceError(code).message);
+      expect(new SpotifySourceError(code).message).not.toContain("secret");
+    } finally {pipe.close();await child.exited;}
+  }
 });

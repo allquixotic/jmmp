@@ -10,6 +10,24 @@ import type { ServerSourceAdapter } from "./types.ts";
 type Config = Extract<SourceConfig, { kind: "spotify" }>;
 type Secrets = Extract<SourceSecrets, { kind: "spotify" }>;
 const refreshes = new WeakMap<Database, Map<number, Promise<string>>>();
+const SPOTIFY_ERRORS: Record<string, string> = {
+  login: "Spotify login failed; reconnect this source in Sources",
+  playlist: "Spotify playlist unavailable; check its URL and that this account can access it",
+  incomplete: "Spotify returned an incomplete playlist; try importing again",
+  item: "Spotify playlist contains an unsupported item; only Spotify music tracks can be imported",
+  limit: "Spotify playlist import exceeds 10000 tracks",
+};
+export class SpotifySourceError extends Error {
+  constructor(code: string) {
+    super(Object.hasOwn(SPOTIFY_ERRORS, code) ? SPOTIFY_ERRORS[code]! : "Spotify source failed; reconnect or check track availability");
+    this.name = "SpotifySourceError";
+  }
+}
+export function spotifyImportError(error: unknown): string {
+  if (error instanceof SpotifySourceError) return error.message;
+  if (error instanceof Error && error.name === "TimeoutError") return "Spotify playlist import timed out; try again";
+  return "Spotify playlist import failed; check the URL and your saved Spotify connection";
+}
 export function normalizeSpotifyUris(values: unknown): string[] {
   if (!Array.isArray(values) || !values.length || values.length > 100) throw new Error("Provide 1–100 Spotify track, album or playlist links");
   return [...new Set(values.map(value => {
@@ -69,7 +87,13 @@ export class SpotifyPipe {
   async line(): Promise<unknown | null> {
     while (true) {
       const end = this.buffered.indexOf(10);
-      if (end >= 0) { if (end > 1024 * 1024) throw new Error("Spotify metadata too large"); const line = this.buffered.slice(0, end); this.buffered = this.buffered.slice(end + 1); return JSON.parse(new TextDecoder().decode(line)); }
+      if (end >= 0) {
+        if (end > 1024 * 1024) throw new Error("Spotify metadata too large");
+        const line = this.buffered.slice(0, end); this.buffered = this.buffered.slice(end + 1);
+        const value = JSON.parse(new TextDecoder().decode(line));
+        if (value?.kind === "error") throw new SpotifySourceError(typeof value.code === "string" ? value.code : "unknown");
+        return value;
+      }
       if (this.buffered.length > 1024 * 1024) throw new Error("Spotify metadata too large");
       const next = await this.reader.read();
       if (next.done) { if (await this.process.exited || this.buffered.length) throw new Error("Spotify source failed; reconnect or check track availability"); return null; }
@@ -107,13 +131,15 @@ export function makeSpotifyAdapter(db: Database, key: CryptoKey, sourceId: numbe
       try {
         if (ctx.signal?.aborted) throw new Error("Scan cancelled");
         for (;;) {
-          const line = await pipe.line() as { kind: string; track?: Omit<Track, "id" | "sourceId">; sourcePlaylistId?: string; name?: string; tracks?: string[] } | null;
+          const line = await pipe.line() as { kind: string; track?: Omit<Track, "id" | "sourceId">; sourcePlaylistId?: string; name?: string; tracks?: string[]; skippedTracks?: number } | null;
           if (!line) break;
           if (line.kind === "track" && line.track) {
             const track = { ...line.track, sourceId, serverAvailable: true }; tracks.set(track.sourceTrackId, track);
             yield { kind: "add", track }; ctx.onProgress?.(tracks.size);
           } else if (line.kind === "playlist" && line.tracks && line.sourcePlaylistId && line.name) {
-            yield { kind: "playlist", sourcePlaylistId: line.sourcePlaylistId, name: line.name, tracks: line.tracks.map(id => { const track = tracks.get(id); if (!track) throw new Error("Incomplete Spotify playlist"); return track; }) };
+            const skippedTracks = line.skippedTracks ?? 0;
+            if (!Number.isSafeInteger(skippedTracks) || skippedTracks < 0 || skippedTracks > 10000) throw new Error("Invalid Spotify metadata");
+            yield { kind: "playlist", sourcePlaylistId: line.sourcePlaylistId, name: line.name, tracks: line.tracks.map(id => { const track = tracks.get(id); if (!track) throw new Error("Incomplete Spotify playlist"); return track; }), skippedTracks };
           } else throw new Error("Invalid Spotify metadata");
         }
       } finally { ctx.signal?.removeEventListener("abort", abort); pipe.close(); }

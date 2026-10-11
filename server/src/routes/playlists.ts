@@ -27,10 +27,11 @@ import { loadAdapter } from "../sources/index.ts";
 import { log } from "../log.ts";
 import { importSpotifyPlaylist, spotifyPlaylistUri } from "../spotify-playlist-import.ts";
 import { randomUUID } from "node:crypto";
+import { spotifyImportError } from "../sources/spotify.ts";
 
 interface SpotifyImportJob {
   did: string; jti: string; ctx: AppCtx; sourceId: number; created: number;
-  status: "pending" | "complete" | "error"; playlistId?: number;
+  status: "pending" | "complete" | "error"; playlistId?: number; tracks: number; error?: string; skippedTracks?: number;
 }
 const spotifyImports = new Map<string, SpotifyImportJob>();
 function cleanSpotifyImports() {
@@ -188,13 +189,16 @@ post("/api/playlists/import/spotify", async (req: Req) => {
   try {
     const config = JSON.parse(source.config_json) as Extract<SourceConfig, { kind: "spotify" }>;
     const jobId = randomUUID();
-    const job: SpotifyImportJob = { did: session.did, jti: session.jti, ctx: req.ctx, sourceId: body.sourceId, created: Date.now(), status: "pending" };
+    const job: SpotifyImportJob = { did: session.did, jti: session.jti, ctx: req.ctx, sourceId: body.sourceId, created: Date.now(), status: "pending", tracks: 0 };
     spotifyImports.set(jobId, job);
     // Short HTTP requests work through tunnels even for large playlists. The
     // import continues if its initiating browser navigates away or disconnects.
-    void importSpotifyPlaylist(req.ctx.db, req.ctx.machineKey, body.sourceId, config, uri, req.ctx.cfg.dataDir)
-      .then(id => { job.playlistId = id; job.status = "complete"; })
-      .catch(() => { job.status = "error"; });
+    void importSpotifyPlaylist(req.ctx.db, req.ctx.machineKey, body.sourceId, config, uri, req.ctx.cfg.dataDir, undefined, tracks => { job.tracks = tracks; })
+      .then(result => { job.playlistId = result.playlistId; job.skippedTracks = result.skippedTracks; job.status = "complete"; })
+      .catch(error => {
+        job.error = spotifyImportError(error); job.status = "error";
+        log.warn("Spotify playlist import failed", { jobId, sourceId: job.sourceId, tracks: job.tracks, error: job.error });
+      });
     return ok({ jobId }, { status: 202 });
   } catch {
     return fail("Spotify playlist import failed; check the URL and your saved Spotify connection", 502);
@@ -207,10 +211,10 @@ get("/api/playlists/import/spotify/:jobId", async (req: Req) => {
   cleanSpotifyImports();
   const job = spotifyImports.get(req.params.jobId!);
   if (!job || job.ctx.db !== req.ctx.db || job.did !== session.did || job.jti !== session.jti) return fail("Playlist import expired; check Playlists or try again", 404);
-  if (job.status === "pending") return ok({ status: "pending" });
-  if (job.status === "error") return fail("Spotify playlist import failed; check the URL and your saved Spotify connection", 502);
+  if (job.status === "pending") return ok({ status: "pending", tracks: job.tracks });
+  if (job.status === "error") return fail(job.error!, 502);
   const playlist = loadPlaylist(req, job.playlistId!);
-  return playlist ? ok({ status: "complete", playlist }) : fail("Imported playlist was removed", 404);
+  return playlist ? ok({ status: "complete", playlist, skippedTracks: job.skippedTracks ?? 0 }) : fail("Imported playlist was removed", 404);
 });
 
 post("/api/playlists", async (req: Req) => {

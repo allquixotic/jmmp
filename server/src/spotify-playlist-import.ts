@@ -16,16 +16,21 @@ export function spotifyPlaylistUri(value: unknown): string {
 export async function importSpotifyPlaylist(
   db: Database, key: CryptoKey, sourceId: number,
   config: Extract<SourceConfig, { kind: "spotify" }>, uri: string,
-  dataDir: string, signal?: AbortSignal,
-): Promise<number> {
+  dataDir: string, signal?: AbortSignal, onProgress?: (tracks: number) => void,
+): Promise<{ playlistId: number; skippedTracks: number }> {
   const adapter = makeSpotifyAdapter(db, key, sourceId, { ...config, uris: [uri] }, dataDir);
   let playlist: { name: string; tracks: Array<Omit<Track, "id">> } | undefined;
+  let skippedTracks = 0;
   const deadline = AbortSignal.timeout(5 * 60 * 1000);
   const cancellation = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let loaded = 0;
   for await (const event of adapter.scan({ signal: cancellation })) {
+    if (event.kind === "add") onProgress?.(++loaded);
     if (event.kind === "playlist") {
       if (playlist || event.sourcePlaylistId !== uri || event.tracks.length > 10000) throw new Error("Invalid Spotify playlist metadata");
       playlist = { name: event.name, tracks: event.tracks };
+      skippedTracks = event.skippedTracks ?? 0;
+      if (!Number.isSafeInteger(skippedTracks) || skippedTracks < 0 || event.tracks.length + skippedTracks > 10000) throw new Error("Invalid Spotify playlist metadata");
     }
   }
   cancellation.throwIfAborted();
@@ -44,6 +49,6 @@ export async function importSpotifyPlaylist(
     const id = Number(inserted.lastInsertRowid);
     // Bypass source binding, including the normal new-playlist Qobuz default.
     replacePlaylistTracks(db, id, ids);
-    return id;
+    return { playlistId: id, skippedTracks };
   })();
 }

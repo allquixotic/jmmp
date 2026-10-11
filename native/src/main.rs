@@ -22,8 +22,15 @@ struct Upstream {
     protocol: String,
 }
 
+fn initialize_crypto() {
+    // Select one provider for both MoQ and librespot before either mode builds
+    // a TLS client. Rustls cannot infer it when both providers are compiled in.
+    let _ = moq_tokio::crypto::install_default();
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    initialize_crypto();
     if std::env::args().nth(1).as_deref() == Some("--spotify") {
         return spotify::run().await;
     }
@@ -189,4 +196,15 @@ async fn main() -> anyhow::Result<()> {
     running.await.context("relay task")??;
     result?;
     upstream_shutdown
+}
+
+#[cfg(test)]
+mod startup_tests {
+    #[test]
+    fn v18_spotify_tls_provider_is_selected_before_request() {
+        super::initialize_crypto();
+        // Both ring (librespot) and aws-lc-rs (MoQ) are compiled in. Spotify's
+        // HTTPS connector needs the process default, without a network request.
+        let _ = moq_tokio::rustls::ClientConfig::builder();
+    }
 }

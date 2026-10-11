@@ -45,6 +45,9 @@ V14: Default Spotify sign-in needs only Premium account; fixed upstream loopback
 V15: Mutable SPA entry points/service worker revalidate through CDN; only content-hashed bundles immutable; music cache unchanged.
 V16: Spotify sign-in requires no collection URLs; later imports reuse encrypted refresh credentials and atomically create editable local snapshots preserving order/duplicates, without binding to Spotify or Qobuz; rescans retain imported tracks.
 V17: Playlist metadata imports use bounded background jobs and authenticated, session-bound status polling; no long HTTP request through a tunnel, no partial playlist on failure.
+V18: Native helper selects process TLS crypto provider before either Spotify or MoQ initializes HTTPS; compiled provider ambiguity never reaches login.
+V19: Spotify import UI shows loaded track count; background failure yields actionable allowlisted error and safe server log; native diagnostics/credentials never enter response; polling has finite deadline.
+V20: Mixed Spotify playlists preserve order/duplicates of supported music; local-file/other unsupported references skipped with explicit count and persistent UI notice; never claimed server-playable.
 
 ## §T TASKS
 id|status|task|cites
@@ -91,3 +94,6 @@ B23|2026-10-11|Mutable sw.js lacks origin cache policy; CDN minimum browser TTL 
 B24|2026-10-11|New playlist-import test fixture omits WebAuthn origin required by session cookie creation|Provide configured controller origin in authenticated fixtures (V10,V16)
 B25|2026-10-11|Browser test expects an exact text node on a storage label containing an icon|Assert the displayed storage label within its container (V10,V16)
 B26|2026-10-11|Desktop sidebar exposes individual playlists but no link to the playlist index/import page|Add All playlists navigation and exercise it in the import browser test (V16)
+B27|2026-10-11|Bundled MoQ and librespot enable both Rustls providers; Spotify mode starts before selecting a default and panics before metadata|Select shared provider before mode dispatch; offline native TLS regression and real saved-account playlist import (V18)
+B28|2026-10-11|Spotify helper stderr ignored and import jobs discard errors; UI shows only an indefinite spinner|Typed native error codes, safe job logging/status errors, track progress and bounded client polling; regression checks (V19)
+B29|2026-10-11|Native metadata aborts entire playlist on first Spotify local file or other unsupported item|Filter unsupported references, preserve remaining music order, report skipped count; mixed native/server/browser tests (V20)

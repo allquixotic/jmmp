@@ -150,7 +150,7 @@ test("V17 background import returns promptly, binds status to its session and re
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const adapter = spyOn(spotify, "makeSpotifyAdapter").mockReturnValue({
-    async *scan() { await held; yield { kind: "playlist", sourcePlaylistId: playlistUri, name: "Background snapshot", tracks: [a] }; },
+    async *scan() { yield { kind: "add", track: a }; await held; yield { kind: "playlist", sourcePlaylistId: playlistUri, name: "Background snapshot", tracks: [a] }; },
     async fetch() { throw new Error("Unused"); },
   });
   try {
@@ -158,7 +158,7 @@ test("V17 background import returns promptly, binds status to its session and re
     expect(start.status).toBe(202);
     const { data } = await start.json() as { data: { jobId: string } };
     const status = `/api/playlists/import/spotify/${data.jobId}`;
-    expect((await (await f.call(status)).json() as { data: unknown }).data).toEqual({ status: "pending" });
+    expect((await (await f.call(status)).json() as { data: unknown }).data).toEqual({ status: "pending", tracks: 1 });
     const other = await mintSession(f.ctx, "other", "full");
     expect((await f.call(status, undefined, "GET", other.cookie)).status).toBe(404);
     expect((await f.call(status, undefined, "GET", "")).status).toBe(401);
@@ -168,4 +168,43 @@ test("V17 background import returns promptly, binds status to its session and re
     expect((await f.waitForImport(data.jobId)).status).toBe(200);
     expect(f.db.query("SELECT name FROM playlists").get()).toEqual({ name: "Background snapshot" });
   } finally { release(); adapter.mockRestore(); f.close(); }
+});
+
+test("V19 failed background import exposes a safe actionable error without native secrets", async () => {
+  const f = await fixture();
+  const adapter = spyOn(spotify, "makeSpotifyAdapter").mockReturnValue({
+    async *scan() { throw new spotify.SpotifySourceError("login"); yield { kind: "add", track: a }; },
+    async fetch() { throw new Error("Unused"); },
+  });
+  try {
+    const response = await f.importPlaylist();
+    expect(response.status).toBe(502);
+    expect((await response.json() as { error: string }).error).toBe("Spotify login failed; reconnect this source in Sources");
+    adapter.mockReturnValue({
+      async *scan() { throw new Error("private-access private-refresh https://secret.example/?token=secret"); yield { kind: "add", track: a }; },
+      async fetch() { throw new Error("Unused"); },
+    });
+    const unexpected = await f.importPlaylist();
+    const body = await unexpected.text();
+    expect(body).not.toContain("private-"); expect(body).not.toContain("secret.example");
+    expect(f.db.query("SELECT 1 FROM playlists").get()).toBeNull();
+  } finally { adapter.mockRestore(); f.close(); }
+});
+
+test("V20 mixed Spotify playlists import supported music and report skipped items", async () => {
+  const f = await fixture();
+  const adapter = spyOn(spotify, "makeSpotifyAdapter").mockReturnValue({
+    async *scan() {
+      for (const track of [a, b, a]) yield { kind: "add", track } as ScanEvent;
+      yield { kind: "playlist", sourcePlaylistId: playlistUri, name: "Mixed collection", tracks: [a, b, a], skippedTracks: 2 } as ScanEvent;
+    },
+    async fetch() { throw new Error("No audio fetch during import"); },
+  });
+  try {
+    const response = await f.importPlaylist();
+    expect(response.status).toBe(200);
+    const result = (await response.json() as { data: { status: string; playlist: Playlist; skippedTracks: number } }).data;
+    expect(result.skippedTracks).toBe(2); expect(result.playlist.trackCount).toBe(3);
+    expect(result.playlist.storage.kind).toBe("local");
+  } finally { adapter.mockRestore(); f.close(); }
 });

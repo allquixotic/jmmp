@@ -81,6 +81,43 @@ pub async fn run() -> anyhow::Result<()> {
             }
         }
     });
+    let metadata = request.operation == "metadata";
+    let result = execute(request).await;
+    if metadata && let Err(error) = &result {
+        // Never send raw upstream errors, URLs or account credentials to Bun.
+        // Audio mode retains its binary stream and reports failures by exit code.
+        let _ = emit(&json!({"kind":"error","code":error_code(error)}));
+    }
+    result
+}
+
+fn error_code(error: &anyhow::Error) -> &'static str {
+    for cause in error.chain() {
+        match cause.to_string().as_str() {
+            "Spotify login timed out" | "Spotify login failed; reconnect this source" => {
+                return "login";
+            }
+            "Spotify playlist unavailable" => return "playlist",
+            "Spotify returned an incomplete playlist" => return "incomplete",
+            "Collection contains an unsupported Spotify item" => return "item",
+            "Spotify import exceeds 10000 tracks" => return "limit",
+            _ => {}
+        }
+    }
+    "unknown"
+}
+
+fn importable_tracks(tracks: Vec<SpotifyUri>) -> (Vec<SpotifyUri>, usize) {
+    let count = tracks.len();
+    let supported: Vec<_> = tracks
+        .into_iter()
+        .filter(|id| matches!(id, SpotifyUri::Track { .. }))
+        .collect();
+    let skipped = count - supported.len();
+    (supported, skipped)
+}
+
+async fn execute(request: Request) -> anyhow::Result<()> {
     ensure!(
         matches!(request.operation.as_str(), "metadata" | "stream"),
         "Invalid Spotify operation"
@@ -115,7 +152,9 @@ pub async fn run() -> anyhow::Result<()> {
                     (Some(album.name.clone()), album.tracks().cloned().collect())
                 }
                 SpotifyUri::Playlist { .. } => {
-                    let playlist = Playlist::get(&session, &id).await?;
+                    let playlist = Playlist::get(&session, &id)
+                        .await
+                        .context("Spotify playlist unavailable")?;
                     ensure!(
                         playlist.tracks().len() == playlist.length.max(0) as usize,
                         "Spotify returned an incomplete playlist"
@@ -129,19 +168,20 @@ pub async fn run() -> anyhow::Result<()> {
             };
             count += tracks.len();
             ensure!(count <= MAX_TRACKS, "Spotify import exceeds 10000 tracks");
+            // Spotify local files are references to somebody else's device;
+            // the server cannot fetch their audio. Episodes are not music tracks.
+            let (tracks, skipped) = importable_tracks(tracks);
             let mut ids = Vec::new();
             for track_id in tracks {
-                ensure!(
-                    matches!(track_id, SpotifyUri::Track { .. }),
-                    "Collection contains an unsupported Spotify item"
-                );
                 let track = Track::get(&session, &track_id).await?;
                 let value = track_value(&track)?;
                 ids.push(value["sourceTrackId"].clone());
                 emit(&json!({"kind":"track","track":value}))?;
             }
             if let Some(name) = name {
-                emit(&json!({"kind":"playlist","sourcePlaylistId":uri,"name":name,"tracks":ids}))?;
+                emit(
+                    &json!({"kind":"playlist","sourcePlaylistId":uri,"name":name,"tracks":ids,"skippedTracks":skipped}),
+                )?;
             }
         }
     } else {
@@ -199,6 +239,30 @@ pub async fn run() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn v20_mixed_playlist_preserves_music_order_and_reports_skipped_items() {
+        let a = SpotifyUri::from_uri("spotify:track:5sWHDYs0csV6RS48xBl0tH").unwrap();
+        let b = SpotifyUri::from_uri("spotify:track:6sWHDYs0csV6RS48xBl0tH").unwrap();
+        let local = SpotifyUri::from_uri("spotify:local:Artist:Album:Song:123").unwrap();
+        let episode = SpotifyUri::from_uri("spotify:episode:5sWHDYs0csV6RS48xBl0tH").unwrap();
+        let (music, skipped) =
+            importable_tracks(vec![a.clone(), local, b.clone(), episode, a.clone()]);
+        assert_eq!(music, vec![a.clone(), b, a]);
+        assert_eq!(skipped, 2);
+    }
+    #[test]
+    fn v19_errors_expose_only_fixed_codes() {
+        let secret = anyhow::anyhow!("private-refresh https://secret.example/?token=secret");
+        assert_eq!(error_code(&secret), "unknown");
+        assert_eq!(
+            error_code(&secret.context("Spotify playlist unavailable")),
+            "playlist"
+        );
+        assert_eq!(
+            error_code(&anyhow::anyhow!("Spotify login timed out")),
+            "login"
+        );
+    }
     #[test]
     fn ranges() {
         assert_eq!(byte_range(100, None).unwrap(), (0, 99, 200));

@@ -290,7 +290,10 @@ back to Spotify or bind the new playlist to Qobuz. Changes to Spotify's playlist
 after the import do not change this snapshot; importing again creates a new copy.
 Metadata loads in a background job so large imports work through a tunnel;
 the completed playlist is published atomically, and failures leave no partial
-playlist. Saved credentials refresh automatically; no second sign-in is needed
+playlist. The import dialog shows how many tracks have loaded. Spotify local-file
+references and other unsupported items are skipped with a visible count; upload
+local audio to jmmp separately so the server has its actual bits. Saved
+credentials refresh automatically; no second sign-in is needed
 unless Spotify revokes the authorization. Audio is fetched only when played.
 
 An existing developer application can instead be used through **Advanced: use

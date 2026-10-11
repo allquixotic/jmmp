@@ -112,4 +112,5 @@ export type ScanEvent =
       sourcePlaylistId: string;
       name: string;
       tracks: Array<Omit<Track, "id">>;
+      skippedTracks?: number;
     };

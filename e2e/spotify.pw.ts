@@ -64,21 +64,29 @@ test("Spotify default sign-in needs only an account and completes the pasted red
   await page.route("**/api/playlists/import/spotify", async route => {
     expect(route.request().postDataJSON()).toEqual({ sourceId: 1, url: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" });
     expect(route.request().headers()["x-jmmp-client"]).toBe("1");
-    if (++imports === 1) await route.fulfill({ status: 502, json: { ok: false, error: "Spotify playlist unavailable" } });
+    if (++imports === 1) await route.fulfill({ status: 202, json: { ok: true, data: { jobId: "ui-failure" } } });
     else await route.fulfill({ status: 202, json: { ok: true, data: { jobId: "ui-import" } } });
   });
-  await page.route("**/api/playlists/import/spotify/ui-import", route => route.fulfill({ json: { ok: true, data: { status: "complete", playlist: imported } } }));
+  let failurePolls = 0;
+  await page.route("**/api/playlists/import/spotify/ui-failure", route => {
+    if (++failurePolls === 1) return route.fulfill({ json: { ok: true, data: { status: "pending", tracks: 14 } } });
+    return route.fulfill({ status: 502, json: { ok: false, error: "Spotify playlist unavailable" } });
+  });
+  await page.route("**/api/playlists/import/spotify/ui-import", route => route.fulfill({ json: { ok: true, data: { status: "complete", playlist: imported, skippedTracks: 2 } } }));
   await page.route("**/api/playlists/42", route => route.fulfill({ json: { ok: true, data: { ...imported, tracks: [] } } }));
   await page.getByRole("button", { name: "Import Spotify playlist", exact: true }).click();
   await expect(dialog.getByText("Connected as My Spotify", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Import playlist", exact: true })).toBeDisabled();
   await dialog.getByLabel("Spotify playlist URL", { exact: true }).fill("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M");
   await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText("Loaded 14 tracks…");
   await expect(dialog.getByText("Spotify playlist unavailable", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
   await expect(page).toHaveURL(/\/playlists\/42$/);
   await expect(page.getByRole("main").getByText("Imported collection", { exact: true })).toBeVisible();
   await expect(page.getByRole("main").locator(".playlist-storage")).toContainText("jmmp server");
+  await expect(page.getByText("Skipped 2 Spotify local files or unsupported items.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss", exact: true }).click();
   expect(oauthStarts).toBe(1);
   expect(imports).toBe(2);
 });
