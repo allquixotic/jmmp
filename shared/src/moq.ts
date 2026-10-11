@@ -70,6 +70,8 @@ export interface PlaybackStatus {
   state: "idle" | "buffering" | "playing" | "paused" | "ended" | "error";
   params: DspParams; error: string | null;
 }
+export interface NowPlayingTrack { title: string | null; artist: string | null }
+export interface ListenerPlaybackStatus extends PlaybackStatus { nowPlaying: NowPlayingTrack | null }
 export type PlaybackCommand =
   | { type: "play"; trackId: number; position?: number; paused?: boolean; params?: Partial<DspParams> }
   | { type: "seek"; position: number }

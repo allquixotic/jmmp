@@ -1,7 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 import type { Server, ServerWebSocket } from "bun";
-import { DEFAULT_DSP_PARAMS } from "@jmmp/shared";
+import { DEFAULT_DSP_PARAMS, type ListenerPlaybackStatus } from "@jmmp/shared";
 import { playbackController } from "./audio/controller.ts";
 import { ok, fail, type AppCtx } from "./router.ts";
 import { serveStatic } from "./routes/static.ts";
@@ -21,7 +21,8 @@ export async function publicRequest(request: Request, ctx: AppCtx, server?: Serv
     const s = playback.status;
     return ok({ instanceId: s.instanceId, revision: s.revision, generation: s.generation, trackId: null,
       position: s.position, duration: s.duration, state: s.state, params: DEFAULT_DSP_PARAMS,
-      error: s.error ? "Broadcast unavailable" : null }, { headers: { "Cache-Control": "no-store" } });
+      error: s.error ? "Broadcast unavailable" : null, nowPlaying: playback.nowPlaying() } satisfies ListenerPlaybackStatus,
+      { headers: { "Cache-Control": "no-store" } });
   }
   if (url.pathname === "/moq" && server && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
     // Only public subscribe credentials are forwarded. Client query strings,

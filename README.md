@@ -174,6 +174,9 @@ fields. Route the control hostname to port 8080 and the public hostname to port
 subscribe credentials, assets, and `/moq` WebSocket forwarding. It has no control,
 authentication, library, upload, or source API. Public listening is off by default
 and must also be enabled in Settings → MoQ output.
+The public listening page shows the current track and artist before listening,
+refreshes them automatically, and keeps them visible while playback is paused.
+Its status endpoint shares only that track's title/artist, never source details.
 
 For a managed CDN, store its full publish URL in the private `publisherUrlFile`,
 readable only by jmmp. Set the GUI's managed WebTransport URL to the CDN's

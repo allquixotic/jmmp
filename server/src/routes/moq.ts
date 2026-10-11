@@ -1,6 +1,6 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
-import type { PlaybackCommand } from "@jmmp/shared";
+import type { ListenerPlaybackStatus, PlaybackCommand } from "@jmmp/shared";
 import { get, post, put, ok, fail } from "../router.ts";
 import { requireFullSession } from "../session.ts";
 import { playbackController } from "../audio/controller.ts";
@@ -30,7 +30,9 @@ get("/api/moq/listener", async req => {
 });
 get("/api/playback", async req => {
   const session = await requireFullSession(req); if (session instanceof Response) return session;
-  return ok(playbackController(req.ctx).status);
+  const playback = playbackController(req.ctx);
+  return ok({ ...playback.status, nowPlaying: playback.nowPlaying() } satisfies ListenerPlaybackStatus,
+    { headers: { "Cache-Control": "no-store" } });
 });
 post("/api/playback", async req => {
   const session = await requireFullSession(req); if (session instanceof Response) return session;

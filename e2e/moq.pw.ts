@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import type { ListenerPlaybackStatus } from "../shared/src/moq.ts";
 let child: ChildProcess;
 let fixture: { url: string; token: string; relayPort: number; publicUrl: string };
 test.beforeAll(async () => {
@@ -82,6 +83,40 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
     // flows through its WS proxy; private APIs remain absent on this socket.
     expect((await subscriber.request.get(fixture.publicUrl + "/api/sources")).status()).toBe(404);
     await subscriber.goto(fixture.publicUrl + "/public-listen");
+    await expect(subscriber.getByText("Nothing playing right now.", { exact: true })).toBeVisible();
+    // Public metadata updates without an audio subscription or credentials.
+    // Keep this page disconnected while exercising track changes and recovery.
+    const metadataPage = await fallback.newPage();
+    const metadataRequests: string[] = [];
+    metadataPage.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/") || path === "/moq") metadataRequests.push(request.method() + " " + path);
+    });
+    const idleStatus = (await (await subscriber.request.get(fixture.publicUrl + "/api/public/moq/status")).json()).data;
+    let metadataStatus: ListenerPlaybackStatus = { ...idleStatus, state: "buffering", nowPlaying: { title: "Broadcast One", artist: "First Artist" } };
+    let metadataFailure = false;
+    await metadataPage.route("**/api/public/moq/status", route => route.fulfill({
+      status: metadataFailure ? 503 : 200, contentType: "application/json",
+      body: JSON.stringify(metadataFailure ? { ok: false, error: "Unavailable" } : { ok: true, data: metadataStatus }),
+    }));
+    await metadataPage.goto(fixture.publicUrl + "/public-listen");
+    await expect(metadataPage.getByRole("heading", { name: "Broadcast One", exact: true })).toBeVisible();
+    await expect(metadataPage.getByText("First Artist", { exact: true })).toBeVisible();
+    metadataStatus = { ...metadataStatus, state: "paused", nowPlaying: { title: "Broadcast Two", artist: "Second Artist" } };
+    await expect(metadataPage.getByRole("heading", { name: "Broadcast Two", exact: true })).toBeVisible();
+    await expect(metadataPage.getByText("Second Artist", { exact: true })).toBeVisible();
+    await expect(metadataPage.getByText("First Artist", { exact: true })).toHaveCount(0);
+    metadataStatus = { ...metadataStatus, state: "ended", nowPlaying: null };
+    await expect(metadataPage.getByText("Nothing playing right now.", { exact: true })).toBeVisible();
+    metadataFailure = true;
+    await expect(metadataPage.getByText("Could not load the current track. Retrying…", { exact: true })).toBeVisible();
+    metadataFailure = false;
+    metadataStatus = { ...metadataStatus, state: "playing", nowPlaying: { title: "Broadcast Three", artist: "Third Artist" } };
+    await expect(metadataPage.getByRole("heading", { name: "Broadcast Three", exact: true })).toBeVisible();
+    expect(await metadataPage.evaluate(() => (window as any).__moqAudio.frames)).toBe(0);
+    expect(metadataRequests.length).toBeGreaterThan(1);
+    expect(new Set(metadataRequests)).toEqual(new Set(["GET /api/public/moq/status"]));
+    await metadataPage.close();
     await subscriber.getByRole("button", { name: "Listen", exact: true }).click({ timeout: 5000 });
     // Exercise the normal controlling player, not only the separate listener page.
     await page.goto(fixture.url + "/library/songs");

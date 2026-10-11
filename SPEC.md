@@ -54,6 +54,7 @@ V22: Invitation grants only registration until verified passkey succeeds; challe
 V23: Invited passkeys obey configured WebAuthn RP/origin/user verification; successful recipient can later sign in normally; wipe-passkeys invalidates invitations/challenges; public music listener exposes no invitation API.
 V24: Packaged audio worker resolves its sibling bundled helper without a source checkout/toolchain; Spotify source bytes reach shared DSP from that worker.
 V25: Playback startup and asynchronous source failures set recoverable player error state and display an error in both compact and desktop transport.
+V26: Public now-playing status exposes only selected track title/artist; listener page refreshes metadata before listening and on track changes, preserves paused metadata, and clears idle/ended/error metadata without source audio/control requests.
 
 ## §T TASKS
 id|status|task|cites
@@ -72,6 +73,7 @@ T11|x|default Spotify to built-in browser login; verify and deploy|V8,V10,V13,V1
 T12|x|separate Spotify account connection and native playlist URL import; verify and deploy|V10,V13,V14,V15,V16,V17,I.spotify,I.spotify-import
 T13|x|single-use passkey invitation URL/QR, authenticated management, recipient enrollment; verify, push and deploy|V10,V11,V21,V22,V23,I.passkey-invite
 T14|x|repair packaged Spotify worker helper lookup and visible playback errors; verify, publish and deploy|V8,V10,V24,V25,I.helper,I.spotify,I.playback
+T15|x|public listener current track/artist display; verify, publish and deploy|V10,V11,V15,V26,I.public,I.playback
 
 ## §B BUGS
 id|date|cause|fix
@@ -107,3 +109,4 @@ B28|2026-10-11|Spotify helper stderr ignored and import jobs discard errors; UI 
 B29|2026-10-11|Native metadata aborts entire playlist on first Spotify local file or other unsupported item|Filter unsupported references, preserve remaining music order, report skipped count; mixed native/server/browser tests (V20)
 B30|2026-10-11|Bundled audio worker imports empty asset placeholders; Spotify fetch searches for source checkout instead of extracted helper|Reuse sibling packaged helper; isolated bundled-worker source/DSP regression (V24)
 B31|2026-10-11|Transport hides backend failures; rejected playback startup leaves state unchanged|Expose playback errors and handle startup rejection; store/browser regressions (V25)
+B32|2026-10-11|Root browser tests cannot resolve workspace-only shared package alias|Use relative shared type import; tools typecheck covers browser regressions (V10)

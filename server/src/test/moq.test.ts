@@ -71,6 +71,38 @@ test("V1/V7: default output stays off; invalid configuration never persists", as
   } finally { await app.close(); }
 });
 
+test("V26 public now-playing metadata follows selected tracks without exposing source details", async () => {
+  const app = await setup();
+  try {
+    const playback = playbackController(app.ctx);
+    playback.settings = { ...DEFAULT_MOQ_SETTINGS, enabled: true, publicListening: true };
+    app.ctx.db.run("INSERT INTO sources(kind,name,config_json,cache_policy) VALUES ('local','Private source','{}','none')");
+    app.ctx.db.run("INSERT INTO tracks(source_id,source_track_id,title,artist,codec) VALUES (1,'private/path-one.flac','First track','First artist','flac'),(1,'private/path-two.flac','Second track','Second artist','flac')");
+    const status = async () => {
+      const response = await publicRequest(new Request("http://localhost/api/public/moq/status"), app.ctx);
+      expect(response!.headers.get("cache-control")).toBe("no-store");
+      const data = (await response!.json()).data;
+      expect(data.trackId).toBeNull();
+      expect(JSON.stringify(data)).not.toContain("private/path");
+      expect(JSON.stringify(data)).not.toContain("Private source");
+      return data;
+    };
+    playback.status.trackId = 1;
+    for (const state of ["buffering", "playing", "paused"] as const) {
+      playback.status.state = state;
+      expect((await status()).nowPlaying).toEqual({title:"First track",artist:"First artist"});
+    }
+    playback.status.trackId = 2; playback.status.state = "playing";
+    expect((await status()).nowPlaying).toEqual({title:"Second track",artist:"Second artist"});
+    for (const state of ["idle", "ended", "error"] as const) {
+      playback.status.state = state;
+      expect((await status()).nowPlaying).toBeNull();
+    }
+    playback.status.state = "playing"; playback.status.trackId = 999;
+    expect((await status()).nowPlaying).toBeNull();
+  } finally { await app.close(); }
+});
+
 test("V11/V12: public listener isolates all controller APIs and forwards subscribe-only WebSockets", async () => {
   const app = await setup();
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });

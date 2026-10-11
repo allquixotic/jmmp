@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { SignJWT, jwtVerify } from "jose";
 import { DEFAULT_DSP_PARAMS, DEFAULT_MOQ_SETTINGS, validateDspParams, validateMoqSettings,
-  type MoqSettings, type PlaybackCommand, type PlaybackStatus, type MoqListener } from "@jmmp/shared";
+  type MoqSettings, type PlaybackCommand, type PlaybackStatus, type MoqListener, type NowPlayingTrack } from "@jmmp/shared";
 import type { AppCtx } from "../router.ts";
 import type { ActiveSession } from "../session.ts";
 import { NativeOutput } from "./helper.ts";
@@ -25,6 +25,10 @@ export class PlaybackController {
   }
   get running() { return !!this.helper?.alive; }
   get browserStreamingAllowed() { return !this.settings.enabled && !this.enabling; }
+  nowPlaying(): NowPlayingTrack | null {
+    if (!this.status.trackId || !["buffering", "playing", "paused"].includes(this.status.state)) return null;
+    return this.ctx.db.query<NowPlayingTrack, [number]>("SELECT title,artist FROM tracks WHERE id=?").get(this.status.trackId);
+  }
   snapshot() { return { settings: this.settings, running: this.running, error: this.error, playback: structuredClone(this.status) }; }
   async initialize() { if (this.settings.enabled) { try { await this.start(this.settings); } catch (error) { this.fail(String(error)); } } }
   private exclusive<T>(run: () => Promise<T>): Promise<T> {
