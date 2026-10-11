@@ -5,6 +5,7 @@ import { DEFAULT_DSP_PARAMS } from "@jmmp/shared";
 import { api } from "src/api";
 import type * as Watch from "@moq/watch";
 import type * as Net from "@moq/net";
+import { AdaptiveLatency, type ListenerLatency } from "./adaptive-latency";
 
 function deadline<T>(promise: Promise<T>, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -49,6 +50,19 @@ export class MoqPlayer extends EventTarget {
   constructor(private publicListener = false) { super(); }
   private watch: Watch.Player | undefined;
   private connection: Net.Connection | undefined;
+  private watchModule: typeof Watch | undefined;
+  private netModule: typeof Net | undefined;
+  private listenerName = "";
+  private delay?: InstanceType<typeof Watch.Signals.Signal<Net.Time.Milli>>;
+  private enabled?: InstanceType<typeof Watch.Signals.Signal<boolean>>;
+  private rearming?: ReturnType<typeof setTimeout>;
+  private latency = new AdaptiveLatency();
+  private mediaCleanups: Array<() => void> = [];
+  private monitoring?: ReturnType<typeof setInterval>;
+  private mediaProgressAt = 0;
+  private heardAudio = false;
+  private refillUntil = 0;
+  private underrun: ReturnType<typeof setTimeout> | undefined;
   private paused?: InstanceType<typeof Watch.Signals.Signal<boolean>>;
   private params = { ...DEFAULT_DSP_PARAMS };
   private serial: Promise<unknown> = Promise.resolve();
@@ -63,7 +77,7 @@ export class MoqPlayer extends EventTarget {
   private ended = "";
   private unavailable = "";
   private opening: Promise<void> | undefined;
-  private pollAbort?: AbortController;
+  private pollAbort: AbortController | undefined;
   private cleanups: Array<() => void> = [];
   private epoch = 0;
   private error(error: unknown) { this.dispatchEvent(new CustomEvent("error", { detail: String(error) })); this.dispatchEvent(new CustomEvent("state", { detail: "error" })); }
@@ -80,11 +94,12 @@ export class MoqPlayer extends EventTarget {
     const [watch, net, listener] = await Promise.all([import("@moq/watch"), import("@moq/net"), api.get<MoqListener>(this.publicListener ? "/api/public/moq/listener" : "/api/moq/listener")]);
     if (mine !== this.epoch) return;
     this.connection = new net.Connection({ ...listenerOptions(listener), linger: net.Time.Milli(0) });
-    this.paused = new watch.Signals.Signal(false);
-    this.watch = new watch.Player({ origin: this.connection.origin, probe: this.connection.probe,
-      name: net.Path.from(listener.name), volume: 1, paused: this.paused, delay: "auto" });
+    this.watchModule = watch; this.netModule = net; this.listenerName = listener.name;
+    // Wait for authoritative status before rendering cached media from an idle
+    // broadcast. The first accepted playing/buffering status unlocks playback.
+    this.paused = new watch.Signals.Signal(true);
+    this.restartMedia();
     const resumeAudio = () => { void this.watch?.audio.out.context.peek()?.resume().catch(error => this.error(error)); };
-    this.cleanups.push(this.watch.audio.out.context.subscribe(resumeAudio)); resumeAudio();
     document.addEventListener("pointerdown", resumeAudio);
     this.cleanups.push(() => document.removeEventListener("pointerdown", resumeAudio));
     this.cleanups.push(this.connection.error.subscribe(() => { const error = this.connection?.error.peek(); if (error) { this.error(error); this.reconnect(); } }));
@@ -96,12 +111,107 @@ export class MoqPlayer extends EventTarget {
     this.cleanups.push(this.connection.transport.subscribe(() => {
       this.dispatchEvent(new CustomEvent("transport", { detail: this.connection?.transport.peek() ?? "Connecting" }));
     }));
-    this.cleanups.push(this.watch.audio.out.sampleRate.subscribe(() => {
-      const rate = this.watch?.audio.out.sampleRate.peek();
+    this.polling = setInterval(() => void this.poll(), 250);
+    this.monitoring = setInterval(() => this.monitorMedia(), 250);
+    void this.poll();
+    this.renewal = setTimeout(() => this.reconnect(), Math.max(1000, listener.expires * 1000 - Date.now() - 60000));
+  }
+  private expectedAudio() { return this.lastStatus?.state === "playing" || this.lastStatus?.state === "buffering"; }
+  private resetMonitoring() {
+    clearTimeout(this.underrun); this.underrun = undefined; this.heardAudio = false;
+    const now = performance.now();
+    this.latency.boundary(now); this.mediaProgressAt = now;
+    this.refillUntil = now + this.latency.targetMs + 500;
+  }
+  private restartMedia() {
+    const watch = this.watchModule, net = this.netModule, connection = this.connection;
+    if (!watch || !net || !connection) return;
+    this.resetMonitoring();
+    if (this.watch) {
+      // Restart only media demand. Keep the catalog subscription, transport and
+      // AudioContext alive, including the user's audio-unlock gesture.
+      const media = this.watch;
+      this.enabled?.set(false); media.reset(); clearTimeout(this.rearming);
+      this.rearming = setTimeout(() => { if (this.watch === media) this.enabled?.set(true); }, 0);
+      return;
+    }
+    for (const cleanup of this.mediaCleanups.splice(0)) cleanup();
+    this.enabled = new watch.Signals.Signal(true);
+    this.delay = new watch.Signals.Signal(net.Time.Milli(this.latency.targetMs));
+    const media = this.watch = new watch.Player({ origin: connection.origin, probe: connection.probe,
+      name: net.Path.from(this.listenerName), volume: 1, paused: this.paused!, enabled: this.enabled, delay: this.delay,
+      // Keep backlog encoded, with backpressure; finite and below relay retention.
+      buffer: net.Time.Milli(5000) });
+    const resumeAudio = () => { void media.audio.out.context.peek()?.resume().catch(error => { if (this.watch === media) this.error(error); }); };
+    this.mediaCleanups.push(media.audio.out.context.subscribe(resumeAudio)); resumeAudio();
+    let stalled = true, timestamp: number | undefined;
+    this.mediaCleanups.push(media.audio.out.timestamp.subscribe(() => {
+      const next = media.audio.out.timestamp.peek();
+      if (next !== undefined && next !== timestamp) {
+        if (next > (timestamp ?? 0)) this.heardAudio = true;
+        timestamp = next; this.mediaProgressAt = performance.now();
+      }
+    }));
+    this.mediaCleanups.push(media.audio.out.stalled.subscribe(() => {
+      const next = media.audio.out.stalled.peek();
+      if (next && !stalled) this.noteUnderrun();
+      stalled = next;
+    }));
+    this.mediaCleanups.push(media.audio.out.buffered.subscribe(() => {
+      // The buffered live edge advances as transport groups are read, before
+      // decoder backpressure. sync.timestamp advances after that backpressure:
+      // measuring it mistakes our own playout delay for growing network jitter.
+      const ranges = media.audio.out.buffered.peek();
+      const newest = ranges.at(-1)?.end;
+      if (newest !== undefined && this.expectedAudio()) { this.latency.observe(performance.now(), newest); this.updateLatency(); }
+    }));
+    this.mediaCleanups.push(media.audio.out.sampleRate.subscribe(() => {
+      const rate = media.audio.out.sampleRate.peek();
       if (rate) this.dispatchEvent(new CustomEvent("audio", { detail: `Opus · ${rate / 1000} kHz` }));
     }));
-    this.polling = setInterval(() => void this.poll(), 250);
-    this.renewal = setTimeout(() => this.reconnect(), Math.max(1000, listener.expires * 1000 - Date.now() - 60000));
+  }
+  private noteUnderrun() {
+    const media = this.watch, generation = this.lastStatus?.generation;
+    if (!media || !this.heardAudio || this.underrun || performance.now() < this.refillUntil || this.lastStatus?.state !== "playing" ||
+      media.audio.out.context.peek()?.state !== "running") return;
+    // Give status polling time to identify intentional cuts/EOF. Remember even
+    // a recovered gap, but exclude our own deliberate latency refill.
+    const observedAt = this.mediaProgressAt, timestamp = media.audio.out.timestamp.peek();
+    this.underrun = setTimeout(() => {
+      this.underrun = undefined;
+      const now = performance.now(), current = media.audio.out.timestamp.peek();
+      // A delayed main-thread poll is not a speaker dropout if the worklet's
+      // playhead caught up with wall time. Confirm a real loss of render time.
+      if (this.watch === media && this.lastStatus?.generation === generation && this.lastStatus?.state === "playing" &&
+        now >= this.refillUntil && timestamp !== undefined && current !== undefined && current >= timestamp &&
+        now - observedAt - (current - timestamp) > 100) {
+        this.latency.underrun(now); this.updateLatency();
+      }
+    }, 500);
+  }
+  private updateLatency() {
+    if (!this.watch || !this.netModule) return;
+    if (this.latency.targetMs > (this.delay?.peek() ?? 0)) this.refillUntil = performance.now() + this.latency.targetMs + 500;
+    this.delay?.set(this.netModule.Time.Milli(this.latency.targetMs));
+    this.dispatchEvent(new CustomEvent<ListenerLatency>("latency", { detail: {
+      playoutMs: this.watch.sync.out.delay.peek(), underruns: this.latency.underruns,
+      buffering: this.expectedAudio() && this.watch.audio.out.stalled.peek(),
+    } }));
+  }
+  private monitorMedia() {
+    if (!this.watch) return;
+    const now = performance.now();
+    this.latency.setRtt(this.connection?.probe.peek()?.rtt);
+    if (this.expectedAudio()) this.latency.tick(now);
+    // Some upstream ring implementations leave `stalled` false on exhaustion.
+    // A stopped render playhead still identifies a real gap, including silent
+    // songs (their timestamps advance normally). One pending observation at a time.
+    if (now - this.mediaProgressAt > 150) this.noteUnderrun();
+    this.updateLatency();
+    // A subscription may finish while its session/catalog remains live. Rearm
+    // only when audio should be arriving; silence while idle is intentional.
+    if (this.lastStatus?.state === "playing" && this.watch.audio.out.context.peek()?.state === "running" &&
+      now - this.mediaProgressAt > Math.max(8000, this.latency.targetMs + 3000)) this.restartMedia();
   }
   private reconnect() {
     if (this.retry) return;
@@ -138,9 +248,10 @@ export class MoqPlayer extends EventTarget {
     if (this.pollBusy) return; this.pollBusy = true;
     const mine = this.epoch;
     const abort = this.pollAbort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 5000);
     try { const status = await api.get<PlaybackStatus>(this.publicListener ? "/api/public/moq/status" : "/api/playback", { signal: abort.signal }); if (mine === this.epoch && !this.playPending) this.apply(status); }
     catch (error) { if (mine === this.epoch) this.error(error); }
-    finally { this.pollBusy = false; }
+    finally { clearTimeout(timeout); if (this.pollAbort === abort) { this.pollBusy = false; this.pollAbort = undefined; } }
   }
   private apply(status: PlaybackStatus) {
     // A poll started before a seek/play command must not rewind state or advance
@@ -151,6 +262,11 @@ export class MoqPlayer extends EventTarget {
       (status.generation < previous.generation || status.revision < previous.revision)) return;
     this.lastStatus = status;
     this.paused?.set(["paused", "idle", "ended", "error"].includes(status.state));
+    if (previous && previous.instanceId === status.instanceId && previous.generation !== status.generation) this.restartMedia();
+    else if (previous?.state !== status.state && this.expectedAudio() && previous?.state !== "playing" && previous?.state !== "buffering") {
+      this.resetMonitoring();
+    }
+    if (previous?.error && !status.error) this.dispatchEvent(new CustomEvent("error", { detail: null }));
     if (previous?.instanceId !== status.instanceId || status.revision !== this.lastRevision) { this.lastRevision = status.revision; if (status.error) this.error(status.error); }
     this.dispatchEvent(new CustomEvent("position", { detail: { position: status.position, duration: status.duration } }));
     if (status.state === "ended") {
@@ -158,6 +274,7 @@ export class MoqPlayer extends EventTarget {
       if (this.ended === ended) return; this.ended = ended;
     }
     this.dispatchEvent(new CustomEvent("state", { detail: status.state === "buffering" ? "loading" : status.state }));
+    this.dispatchEvent(new CustomEvent("status", { detail: status }));
     const failure = `${status.instanceId}:${status.generation}`;
     if (!this.publicListener && status.state === "error" && status.errorCode === "spotify_unavailable" && status.trackId !== null && this.unavailable !== failure) {
       this.unavailable = failure;
@@ -171,11 +288,12 @@ export class MoqPlayer extends EventTarget {
   setParams(params: Partial<DspParams>) { this.params = { ...this.params, ...params }; if (this.watch) void this.send({ type: "params", params }).catch(() => {}); }
   setVolume(volume: number) { this.setParams({ volume }); }
   dispose(resetBackoff = true) {
-    this.epoch++; clearInterval(this.polling); clearTimeout(this.renewal); clearTimeout(this.retry); this.retry = undefined;
+    this.epoch++; clearInterval(this.polling); clearInterval(this.monitoring); clearTimeout(this.rearming); clearTimeout(this.underrun); this.underrun = undefined; clearTimeout(this.renewal); clearTimeout(this.retry); this.retry = undefined;
     if (resetBackoff) this.retryDelay = 500;
-    this.pollAbort?.abort(); this.opening = undefined;
+    this.pollAbort?.abort(); this.pollAbort = undefined; this.pollBusy = false; this.opening = undefined;
     this.lastStatus = undefined; this.lastRevision = undefined;
     for (const cleanup of this.cleanups.splice(0)) cleanup();
+    for (const cleanup of this.mediaCleanups.splice(0)) cleanup();
     this.watch?.close(); this.connection?.close(); this.watch = undefined; this.connection = undefined;
   }
 }

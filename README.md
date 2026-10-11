@@ -143,7 +143,19 @@ speed, ReplayGain, and volume controls. The server reads the source once,
 decodes it with the shared decoder code, applies the shared SoundTouch DSP in a
 Bun worker, and sends bounded 48 kHz stereo PCM through a private pipe to Rust.
 Rust encodes Opus (192 kbps by default) and publishes one broadcast. The browser
-uses the upstream MoQ player for buffering and clock adjustment. Extra listeners
+uses the upstream MoQ player for buffering and clock adjustment. Each listener
+adds its own adaptive jitter budget: arrival bursts and speaker-buffer underruns
+increase delay promptly; stable playback lowers it cautiously. The total playout
+target, including codec/worklet buffering, appears on the listening page. A stable
+low-RTT connection can approach 50 ms; jittery connections may buffer up to about
+five seconds. The encoded backlog stays bounded and does not alter another
+listener's delay or the server's DSP. This is a buffering target, not a promise
+about total network/device latency.
+
+Track selection and seek rearm the audio pipeline on the existing transport.
+Listeners stay connected while idle, at track boundaries, and during temporary
+source failures, then resume when audio returns. Playback status polling supplies
+the generation notification; no separate SSE connection is needed. Extra listeners
 can open /listen after signing in with their own jmmp passkey; their credentials
 allow subscription only.
 

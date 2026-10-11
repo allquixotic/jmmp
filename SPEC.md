@@ -60,6 +60,8 @@ V27: Spotify playback resolves a supported, account-available file through bound
 V28: Only typed Spotify unavailability advances the current queue once per attempt; transient/auth failures stay retryable; skipped-track error and full stack remain inspectable after playback continues; finite unavailable queues terminate.
 V29: Live Spotify search reuses saved server credentials, bounds queries/results/timeouts, persists playable catalog IDs and respects source/field filters without a developer app.
 V30: All track tables expose continuous column dividers, mouse/touch/keyboard resizing and header right-click/long-press visibility menus; validated localStorage preferences restore on startup; hidden columns remain recoverable.
+V31: Connected listeners rearm media on accepted playback generations, including repeated same-track selection and seek; idle/ended/source gaps remain subscribed, stale status never rearms, and stalled subscriptions recover without another Listen click.
+V32: Each listener independently measures arrival jitter and rendered underruns; bounded playout delay rises promptly and falls cautiously, ignores intentional silence/content boundaries, and retains learned delay across media/transport recovery without changing server DSP or other clients.
 
 ## §T TASKS
 id|status|task|cites
@@ -84,6 +86,7 @@ T16|x|repair Spotify alternate track playback and stream startup error codes; ve
 T17|x|typed unavailable Spotify skipping and retained playback diagnostics|V10,V25,V27,V28,I.playback,I.spotify
 T18|x|saved-account live Spotify search|V10,V13,V29,I.spotify
 T19|x|shared resizable/hideable table columns with persisted browser preferences|V10,V30
+T20|x|repair listener discontinuity recovery and add per-client adaptive playout; verify, push and deploy|V9,V10,V31,V32,I.public,I.playback
 
 ## §B BUGS
 id|date|cause|fix
@@ -123,3 +126,12 @@ B32|2026-10-11|Root browser tests cannot resolve workspace-only shared package a
 B33|2026-10-11|Spotify stream picks only requested track files and discards native startup cause; relinked tracks fail despite playable alternatives|Bounded available alternate resolution, matched audio-key ID, fixed stream error codes; preserve worker stacks (V27)
 
 B34|2026-10-11|Animated header menu refocus races immediate keyboard reopen after hiding a header|Instant header menu transitions and no stale refocus; mouse/touch/keyboard browser regression (V30)
+B35|2026-10-11|Playback generations never rearm ended audio subscriptions; auto latency tracks minimum RTT without underrun feedback|Rearm media independently of transport, keep idle listeners waiting, bounded receiver jitter/underrun adaptation and rendered-audio regression (V31,V32)
+B36|2026-10-11|Browser seek test observes retained analyser frequency before queued Play reaches server|Wait for new public track metadata before issuing seek (V31)
+B37|2026-10-11|Jitter observation after decoder backpressure feeds target latency back into its own estimator|Observe transport-buffered live edge before decode pacing; assert stable receiver stays low while another receives delayed bursts (V32)
+B38|2026-10-11|Listener retains current source error after successful generation recovery|Clear active error on recovered status; preserve original diagnostic event/history (V31)
+B39|2026-10-11|Full player replacement churns catalog subscriptions during reconnect and exposes upstream cancellation races|Rearm media demand with supported enabled/reset signals; retain catalog, transport and audio context (V31)
+B40|2026-10-11|Browser jitter route misses native WebSocketStream, leaving delay simulation inactive|Route supported WebSocket ponyfill and assert repeated real delivery pauses plus rendered continuity (V32)
+B41|2026-10-11|Upstream shared ring leaves stalled=false on exhaustion, hiding rendered underruns|Observe stopped render playhead too; validate generation/state after status poll and exclude deliberate refills (V32)
+B42|2026-10-11|Delayed main-thread playhead delivery can resemble a speaker underrun|Confirm lost render time against advancing worklet clock; exclude caught-up signals and pending intentional refills (V32)
+B43|2026-10-11|Cold-start decay immediately removes latency learned from jitter unless an underrun was counted|Apply thirty-second cooldown to proactive jitter growth too; quantize growth to avoid repeated tiny refills (V32)
