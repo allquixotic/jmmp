@@ -22,6 +22,7 @@
     "typecheck": "bun build/typecheck.ts",
     "build": "bun build/build.ts",
     "e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e:spotify": "playwright test -c e2e/spotify.config.ts",
     "e2e:moq": "bun run build && playwright test -c e2e/moq.config.ts"
   },
   "devDependencies": {

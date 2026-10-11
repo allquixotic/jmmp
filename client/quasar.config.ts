@@ -17,7 +17,8 @@ export default defineConfig((ctx) => ({
     open: false,
     port: 9000,
     proxy: {
-      "/api": { target: "http://127.0.0.1:3000", changeOrigin: true },
+      // Preserve the browser-facing Host so OAuth uses the configured origin.
+      "/api": { target: "http://127.0.0.1:3000", changeOrigin: false },
     },
   },
   framework: {

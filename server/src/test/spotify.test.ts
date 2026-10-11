@@ -13,6 +13,8 @@ import { dispatch, type AppCtx } from "../router.ts";
 import type { SourceSecrets } from "@jmmp/shared";
 import "../routes/index.ts";
 import { spotifyRedirectUri } from "../routes/spotify.ts";
+import * as scanWorker from "../scan/worker.ts";
+import { createHash } from "node:crypto";
 
 const uri="spotify:track:5sWHDYs0csV6RS48xBl0tH";
 test("Spotify callbacks use the configured HTTPS origin behind TLS offload", () => {
@@ -88,6 +90,75 @@ test("Spotify OAuth state belongs to its initiating session and is single-use",a
     expect((await call(`/api/sources/spotify/oauth/callback?state=${result.state}&code=replay`,owner.cookie)).status).toBe(400);
     expect(db.query("SELECT 1 FROM sources").get()).toBeNull();
   }finally{db.close();rmSync(dir,{recursive:true,force:true});}
+});
+test("V14 Spotify built-in sign-in needs no developer app and binds pasted callback to its owner",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"jmmp-spotify-default-oauth-")),db=initDb(dir);
+  const ctx={cfg:{dataDir:dir,jwtSecret:"test",sessionTtlDays:1,webauthn:{origin:"https://music.example.com"}},db,machineKey:await loadOrInitMachineKey(dir)} as AppCtx;
+  const owner=await mintSession(ctx,"owner","full"),other=await mintSession(ctx,"other","full");
+  const call=(path:string,cookie:string,body?:unknown)=>dispatch(new Request("https://music.example.com"+path,{method:body?"POST":"GET",headers:{cookie,"X-jmmp-Client":"1"},body:body?JSON.stringify(body):undefined}),ctx);
+  try {
+    const start=await call("/api/sources/spotify/oauth/start",owner.cookie,{uris:[uri]});
+    expect(start.status).toBe(200);
+    const result=(await start.json() as {data:{state:string;authUrl:string;manualCallback:boolean;redirectUri:string}}).data;
+    const authUrl=new URL(result.authUrl);
+    expect(result.manualCallback).toBe(true);
+    expect(result.redirectUri).toBe("http://127.0.0.1:8898/login");
+    expect(authUrl.searchParams.get("client_id")).toBe("65b708073fc0480ea92a077233ca87bd");
+    expect(authUrl.searchParams.get("redirect_uri")).toBe(result.redirectUri);
+    expect(authUrl.searchParams.get("scope")).toBe("streaming");
+    expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authUrl.searchParams.has("code_verifier")).toBe(false);
+    const callback=new URL(result.redirectUri);callback.search=new URLSearchParams({state:result.state,code:"test-code"}).toString();
+    const body={state:result.state,redirectUrl:callback.href};
+    expect((await call("/api/sources/spotify/oauth/complete","",body)).status).toBe(401);
+    expect((await call("/api/sources/spotify/oauth/complete",other.cookie,body)).status).toBe(404);
+    expect((await call(`/api/sources/spotify/oauth/callback?state=${result.state}&code=wrong-flow`,owner.cookie)).status).toBe(400);
+    for (const redirectUrl of [callback.href.replace("127.0.0.1","evil.example"),callback.href.replace(":8898",":8899"),callback.href.replace("/login","/other"),callback.href.replace(result.state,"wrong-state"),callback.href+"#unexpected",callback.href+"&state="+result.state,callback.href+"&code=duplicate",callback.href+"&error=access_denied"])
+      expect((await call("/api/sources/spotify/oauth/complete",owner.cookie,{...body,redirectUrl})).status).toBe(400);
+    const denied=new URL(result.redirectUri);denied.search=new URLSearchParams({state:result.state,error:"access_denied"}).toString();
+    expect((await call("/api/sources/spotify/oauth/complete",owner.cookie,{...body,redirectUrl:denied.href})).status).toBe(502);
+    expect((await call("/api/sources/spotify/oauth/complete",owner.cookie,body)).status).toBe(400);
+    expect(db.query("SELECT 1 FROM sources").get()).toBeNull();
+  } finally {db.close();rmSync(dir,{recursive:true,force:true});}
+});
+test("V14 Spotify built-in login exchanges PKCE once and saves encrypted refresh credentials",async()=>{
+  const dir=mkdtempSync(join(tmpdir(),"jmmp-spotify-default-complete-")),db=initDb(dir);
+  const ctx={cfg:{dataDir:dir,jwtSecret:"test",sessionTtlDays:1,webauthn:{origin:"https://music.example.com"}},db,machineKey:await loadOrInitMachineKey(dir)} as AppCtx;
+  const owner=await mintSession(ctx,"owner","full");
+  const call=(path:string,body?:unknown)=>dispatch(new Request("https://music.example.com"+path,{method:body?"POST":"GET",headers:{cookie:owner.cookie,"X-jmmp-Client":"1"},body:body?JSON.stringify(body):undefined}),ctx);
+  const scan=spyOn(scanWorker,"runScan").mockResolvedValue(undefined);
+  let challenge="";
+  const token=spyOn(globalThis,"fetch").mockImplementation(Object.assign(async(input:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{
+    expect(String(input)).toBe("https://accounts.spotify.com/api/token");
+    const params=new URLSearchParams(String(init?.body));
+    expect(params.get("client_id")).toBe("65b708073fc0480ea92a077233ca87bd");
+    expect(params.get("redirect_uri")).toBe("http://127.0.0.1:8898/login");
+    expect(params.get("code")).toBe("test-code");
+    expect(createHash("sha256").update(params.get("code_verifier")!).digest("base64url")).toBe(challenge);
+    await Bun.sleep(5);
+    return Response.json({access_token:"private-access",refresh_token:"private-refresh",expires_in:3600});
+  },{preconnect:fetch.preconnect}));
+  try{
+    const start=await call("/api/sources/spotify/oauth/start",{clientId:"",uris:[uri],sourceName:"My Spotify"});
+    const result=(await start.json() as {data:{state:string;authUrl:string;redirectUri:string}}).data;
+    challenge=new URL(result.authUrl).searchParams.get("code_challenge")!;
+    const callback=new URL(result.redirectUri);callback.search=new URLSearchParams({state:result.state,code:"test-code"}).toString();
+    const body={state:result.state,redirectUrl:callback.href};
+    const responses=await Promise.all([call("/api/sources/spotify/oauth/complete",body),call("/api/sources/spotify/oauth/complete",body)]);
+    expect(responses.map(r=>r.status).sort()).toEqual([200,400]);
+    expect(token).toHaveBeenCalledTimes(1);expect(scan).toHaveBeenCalledTimes(1);
+    const row=db.query<{id:number;name:string;config_json:string;creds_encrypted:Uint8Array;fetch_mode:string},[]>("SELECT id,name,config_json,creds_encrypted,fetch_mode FROM sources").get()!;
+    expect(row.name).toBe("My Spotify");expect(row.fetch_mode).toBe("proxy");
+    expect(JSON.parse(row.config_json)).toEqual({kind:"spotify",clientId:"65b708073fc0480ea92a077233ca87bd",redirectUri:result.redirectUri,uris:[uri]});
+    expect(new TextDecoder().decode(row.creds_encrypted)).not.toContain("private-access");
+    expect(new TextDecoder().decode(row.creds_encrypted)).not.toContain("private-refresh");
+    const secrets=await decryptJson<SourceSecrets>(ctx.machineKey,row.creds_encrypted);
+    expect(secrets.kind).toBe("spotify");
+    if(secrets.kind==="spotify"){expect(secrets.accessToken).toBe("private-access");expect(secrets.refreshToken).toBe("private-refresh");}
+    const status=(await (await call(`/api/sources/spotify/oauth/status/${result.state}`)).json() as {data:unknown}).data;
+    expect(status).toEqual({status:"complete",sourceId:row.id});
+    expect((await call("/api/sources/spotify/oauth/complete",body)).status).toBe(400);
+  }finally{token.mockRestore();scan.mockRestore();db.close();rmSync(dir,{recursive:true,force:true});}
 });
 test("Spotify pipe preserves audio after a split header and propagates cancellation",async()=>{
   const child=Bun.spawn([process.execPath,"-e",'process.stdout.write("{\\\"size\\\":4}\\n");process.stdout.write(Buffer.from([0,1,2,3]));setInterval(()=>{},1000)'],{stdin:"pipe",stdout:"pipe",stderr:"ignore"});

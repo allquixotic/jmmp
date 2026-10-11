@@ -45,6 +45,14 @@ function mimeFor(path: string): string {
   return MIME[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
+export function staticAssetHeaders(path: string): Record<string, string> {
+  // Only content-hashed bundles are immutable. A CDN must revalidate entry
+  // points such as sw.js; otherwise it can pin the whole PWA to an old build.
+  const hashed = /^assets\/[^/]+-[A-Za-z0-9_-]{8}\.[a-z0-9]+$/.test(path);
+  return { "Content-Type": mimeFor(path),
+    "Cache-Control": hashed ? "public, max-age=31536000, immutable" : "no-cache" };
+}
+
 const decodeCache = new Map<string, Uint8Array<ArrayBuffer>>();
 
 function decodeEmbedded(path: string): Uint8Array<ArrayBuffer> | null {
@@ -60,14 +68,14 @@ function decodeEmbedded(path: string): Uint8Array<ArrayBuffer> | null {
 function serveEmbedded(rel: string): Response | null {
   const bytes = decodeEmbedded(rel);
   if (!bytes) return null;
-  return new Response(bytes, { headers: { "Content-Type": mimeFor(rel) } });
+  return new Response(bytes, { headers: staticAssetHeaders(rel) });
 }
 
 async function serveOnDisk(rel: string): Promise<Response | null> {
   if (!SPA_DIR) return null;
   const path = join(SPA_DIR, rel);
   if (!existsSync(path)) return null;
-  return new Response(Bun.file(path), { headers: { "Content-Type": mimeFor(path) } });
+  return new Response(Bun.file(path), { headers: staticAssetHeaders(rel) });
 }
 
 export async function serveStatic(req: Req): Promise<Response> {

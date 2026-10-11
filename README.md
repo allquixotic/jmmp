@@ -175,6 +175,13 @@ embedded relay through the tunnel. Managed CDN and WebSocket URLs are independen
 because not every CDN supports WebSockets. Set Opus bitrate to 128000 for 128 kbps.
 The connection test verifies the subscriber path before saving the setting.
 
+Configure a CDN to respect jmmp's origin cache headers. In Cloudflare, set
+**Caching → Configuration → Browser Cache TTL → Respect Existing Headers**.
+jmmp revalidates mutable app entry points and the browser's PWA service worker;
+content-hashed assets are immutable. A minimum browser TTL can keep an old
+service worker active after deployment. Purge its previously cached `/sw.js`
+when adopting this policy. This does not clear the browser's music cache.
+
 ## Build
 
 Build the client and server:
@@ -230,6 +237,16 @@ bun run e2e
 The e2e suite uses isolated config and data under `e2e/`, and its runtime data is
 ignored by git.
 
+Verify the default Spotify sign-in UI separately against a fresh server database:
+
+```bash
+bun run e2e:spotify
+```
+
+This uses the real jmmp OAuth start endpoint and mocks Spotify's external
+authorization/token completion. Run it sequentially with the standard suite;
+both use the same development ports and temporary data directory.
+
 Verify the production bundle with real browser Opus decoding over WebTransport
 and forced WebSocket fallback:
 
@@ -255,11 +272,22 @@ jmmp is licensed under the Apache License, Version 2.0. See `LICENSE`.
 ### Spotify source
 
 Add Spotify from **Sources → Add source → Spotify**. Use a Spotify Premium
-account and your own Spotify application client ID. Register the exact redirect
-URI displayed by jmmp in the [Spotify developer dashboard](https://developer.spotify.com/dashboard).
-Spotify requires HTTPS, or an explicit loopback IP for local development;
-`localhost` redirect URIs are not accepted. Paste track, album or playlist links
-(one per line), then complete sign-in. jmmp imports their metadata and playlists.
+account; no developer application or API key is required. Paste track, album or
+playlist links (one per line), then choose **Sign in to Spotify**. jmmp uses the
+same built-in OAuth client as librespot. After signing in, Spotify redirects to
+`http://127.0.0.1:8898/login`. On a remote jmmp server that address may show an
+“Unable to connect” page. Copy the entire final URL from the browser address bar
+into jmmp's **Final redirect URL** field and choose **Finish connection**.
+This is librespot's [headless OAuth flow](https://github.com/librespot-org/librespot/wiki/Options#headless-oauth);
+direct username/password login is no longer supported upstream. The server
+stores encrypted access/refresh credentials and imports the selected collections.
+
+An existing developer application can instead be used through **Advanced: use
+your own Spotify application**. Register the displayed jmmp callback in the
+[Spotify developer dashboard](https://developer.spotify.com/dashboard) and enter
+its client ID. This optional flow returns directly to jmmp after sign-in.
+Its registered callback must use HTTPS or an explicit loopback IP;
+`localhost` redirect URIs are not accepted.
 The source's **Rescan** button refreshes those collections; new collections can
 also be added through the source configuration API's `uris` list.
 
@@ -280,8 +308,8 @@ licenses remain in each vendor directory. Minimal CPAL/rodio compatibility
 patches allow the upgraded fork's desktop backend to compile alongside ALSA 0.12;
 jmmp's shipped helper uses the headless Rustls configuration.
 
-Actual Spotify sign-in and playback require a permitted Spotify application
-and account. The automated checks exercise credential refresh/storage, OAuth
+Actual Spotify sign-in and playback require a Spotify Premium account.
+The automated checks exercise credential refresh/storage, OAuth
 session binding/replay rejection, byte ranges, pipe cancellation, migration and
 source builds without logging into a real Spotify account.
 

@@ -12,6 +12,7 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - Direct dependencies use latest stable npm/crates.io releases; lockfiles updated.
 - Optional public listener isolated from authenticated control API; outbound managed MoQ publishing hides origin address.
 - Vendored librespot fork preserves upstream license/revision; direct crate dependencies latest stable.
+- Spotify default login uses librespot browser OAuth; no user-created developer app required.
 
 ## §I INTERFACES
 - I.output: authenticated `/api/moq` settings/status/test and listener credentials.
@@ -38,6 +39,8 @@ V10: Repository type checking succeeds without suppressing project errors or wea
 V11: Public listener default off; enabled listener exposes only playback metadata, subscribe-only credentials, static player assets and MoQ WebSocket proxy; mutations/control/auth/source routes unreachable.
 V12: Managed relay publisher credential read from private server file, never returned to browser; WT and WS URLs independent; reverse proxy needs no origin TLS/UDP exposure.
 V13: Spotify credentials encrypted server-side; source audio fetched only by server through pinned vendored librespot; ordinary cache path and shared DSP remain usable.
+V14: Default Spotify sign-in needs only Premium account; fixed upstream loopback callback accepted through authenticated, session-bound, single-use PKCE completion; custom developer app optional.
+V15: Mutable SPA entry points/service worker revalidate through CDN; only content-hashed bundles immutable; music cache unchanged.
 
 ## §T TASKS
 id|status|task|cites
@@ -52,6 +55,7 @@ T7|x|upgrade stable dependencies, fix all type errors, verify builds and browser
 T8|x|public listener, managed relay publishing and independent transport URLs|V1,V2,V6,V7,V8,V9,V10,V11,V12,I.public,I.upstream
 T9|x|vendor librespot, upgrade direct crates and add Spotify source|V3,V8,V10,V13,I.spotify,I.build
 T10|x|publish generic features; deploy isolated public/control services and verify CDN playback|V6,V8,V9,V10,V11,V12,V13,I.public,I.upstream,I.spotify
+T11|x|default Spotify to built-in browser login; verify and deploy|V8,V10,V13,V14,V15,I.spotify,I.build
 
 ## §B BUGS
 id|date|cause|fix
@@ -76,3 +80,6 @@ B17|2026-10-11|Permanent outbound publisher failure unobserved; optional native 
 B18|2026-10-11|New MoQ clients use joining FETCH, unsupported by Cloudflare beta; cached catalog join stalls|Publish periodic catalog revisions without audio; verify idle snapshot refresh and managed WT catalog (V7,V12)
 B19|2026-10-11|Cloudflare retains withdrawn publication state across quick same-name restarts|Use unique helper broadcast names/instance IDs and drain outbound connection on shutdown; verify restarted managed catalog (V8,V12)
 B20|2026-10-11|Spotify/Qobuz callbacks derived from Bun HTTP scheme fail behind TLS offload|Use configured public origin matching request host/browser Origin; reject foreign hosts/origins; regression checks (V13)
+B21|2026-10-11|Spotify GUI requires user-created developer app despite librespot built-in OAuth support|Default upstream client/loopback flow, authenticated pasted callback, optional custom app; state/PKCE/encryption tests (V14)
+B22|2026-10-11|Dev API proxy rewrites Host to backend, failing configured OAuth origin checks|Preserve browser-facing Host; real browser default sign-in regression (V8,V14)
+B23|2026-10-11|Mutable sw.js lacks origin cache policy; CDN minimum browser TTL pins old PWA for four hours|Revalidate entry points, immutable hashed bundles, respect origin headers and purge previously cached worker; freshness regression (V15)
