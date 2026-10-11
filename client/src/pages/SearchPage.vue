@@ -28,6 +28,9 @@
       {{ error }}
     </q-banner>
 
+    <q-banner v-for="failure in result?.sourceErrors ?? []" :key="failure.sourceId" role="alert" class="bg-red-1 text-red-10 q-ma-md" dense rounded>
+      {{ sources.sources.find(source => source.id === failure.sourceId)?.name ?? 'Source' }}: {{ failure.error }}
+    </q-banner>
     <div class="search-tools">
       <q-select
         v-model="sourceFilter"

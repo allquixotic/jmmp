@@ -82,7 +82,7 @@ T15|x|public listener current track/artist display; verify, publish and deploy|V
 T16|x|repair Spotify alternate track playback and stream startup error codes; verify, publish and deploy|V10,V13,V24,V25,V27,I.spotify,I.helper
 
 T17|x|typed unavailable Spotify skipping and retained playback diagnostics|V10,V25,V27,V28,I.playback,I.spotify
-T18|.|saved-account live Spotify search|V10,V13,V29,I.spotify
+T18|x|saved-account live Spotify search|V10,V13,V29,I.spotify
 T19|.|shared resizable/hideable table columns with persisted browser preferences|V10,V30
 
 ## §B BUGS

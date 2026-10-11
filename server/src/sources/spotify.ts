@@ -11,6 +11,7 @@ type Config = Extract<SourceConfig, { kind: "spotify" }>;
 type Secrets = Extract<SourceSecrets, { kind: "spotify" }>;
 const refreshes = new WeakMap<Database, Map<number, Promise<string>>>();
 const SPOTIFY_ERRORS: Record<string, string> = {
+  search: "Spotify search failed; try again or reconnect this source in Sources",
   login: "Spotify login failed; reconnect this source in Sources",
   playlist: "Spotify playlist unavailable; check its URL and that this account can access it",
   incomplete: "Spotify returned an incomplete playlist; try importing again",
@@ -120,7 +121,7 @@ export class SpotifyPipe {
   }
 }
 export function makeSpotifyAdapter(db: Database, key: CryptoKey, sourceId: number, config: Config, dataDir = dirname(db.filename)): ServerSourceAdapter {
-  async function open(operation: "metadata" | "stream", extras: Record<string, unknown>) {
+  async function open(operation: "metadata" | "stream" | "search", extras: Record<string, unknown>) {
     const accessToken = await spotifyAccessToken(db, key, sourceId, config);
     const { helper } = await audioAssets(dataDir);
     const child = Bun.spawn([helper, "--spotify"], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
@@ -148,6 +149,27 @@ export function makeSpotifyAdapter(db: Database, key: CryptoKey, sourceId: numbe
           } else throw new Error("Invalid Spotify metadata");
         }
       } finally { ctx.signal?.removeEventListener("abort", abort); pipe.close(); }
+    },
+    async search(query: string, limit: number) {
+      query = query.trim();
+      if ([...query].length < 2 || [...query].length > 256 || !Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid Spotify search");
+      const pipe = await open("search", { query, limit });
+      const timeout = setTimeout(() => pipe.close(), 30000);
+      const tracks: Track[] = [];
+      const seen = new Set<string>();
+      try {
+        for (;;) {
+          const line = await pipe.line() as { kind?: string; track?: Omit<Track, "id" | "sourceId"> } | null;
+          if (!line) break;
+          if (line.kind !== "track" || !line.track || !/^spotify:track:[a-zA-Z0-9]{22}$/.test(line.track.sourceTrackId)) throw new SpotifySourceError("search");
+          if (!seen.has(line.track.sourceTrackId)) {
+            seen.add(line.track.sourceTrackId);
+            tracks.push({ ...line.track, id: 0, sourceId, serverAvailable: true });
+          }
+          if (tracks.length >= limit) break;
+        }
+        return { tracks, albums: [], artists: [] };
+      } finally { clearTimeout(timeout); pipe.close(); }
     },
     async fetch(id: string, range?: ByteRange) {
       const uri = normalizeSpotifyUris([id])[0]!;

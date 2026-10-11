@@ -17,6 +17,7 @@ import { codecFromExtension, type Codec } from "@jmmp/shared";
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { fail, get, ok, post, readJson, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
+import { spotifyImportError } from "../sources/spotify.ts";
 import { loadAdapter } from "../sources/index.ts";
 
 interface TrackRow {
@@ -219,6 +220,7 @@ get("/api/catalog/search", async (req: Req) => {
   const session = await requireFullSession(req);
   if (session instanceof Response) return session;
   const q = req.url.searchParams.get("q") ?? "";
+  if ([...q].length > 256) return fail("Search is limited to 256 characters", 400);
   const sourceParam = req.url.searchParams.get("source");
   const sourceId = sourceParam && sourceParam !== "all" ? parseInt(sourceParam, 10) : null;
   const field = searchField(req.url.searchParams.get("field"));
@@ -253,11 +255,11 @@ get("/api/catalog/search", async (req: Req) => {
   );
   const albumSet = new Map(local.albums.map((album) => [album.id, album]));
 
-  const qobuz = await searchQobuz(req, search, {
+  const live = await searchStreamingSources(req, search, {
     sourceId: filters.sourceId,
     field,
   });
-  for (const t of qobuz.tracks) {
+  for (const t of live.tracks) {
     const upserted = upsertSearchTrack(req, t);
     const key = trackResultKey(upserted);
     if (seenTrackKeys.has(key)) continue;
@@ -272,14 +274,16 @@ get("/api/catalog/search", async (req: Req) => {
         artist: t.artist,
       });
   }
-  for (const album of qobuz.albums) albumSet.set(album.id, album);
-  for (const artist of qobuz.artists) addArtist(artistSet, artist.name, artist.sourceIds);
+  for (const album of live.albums) albumSet.set(album.id, album);
+  for (const artist of live.artists) addArtist(artistSet, artist.name, artist.sourceIds);
 
   const body: SearchResponse = {
     tracks: rankTracks(tracks, search, field),
     albums: [...albumSet.values()],
     artists: [...artistSet.values()],
-    fromQobuzLive: qobuz.fromQobuzLive,
+    fromQobuzLive: live.fromQobuzLive,
+    fromSpotifyLive: live.fromSpotifyLive ?? false,
+    sourceErrors: live.sourceErrors ?? [],
   };
   return ok(body);
 });
@@ -496,32 +500,33 @@ function matchesSearchField(
   return tokensCoveredByTexts(search.lowerTokens, [t.album]);
 }
 
-async function searchQobuz(
+async function searchStreamingSources(
   req: Req,
   search: NormalizedSearchQuery,
   filters: { sourceId: number | null; field: SearchField }
 ): Promise<SearchResponse> {
-  const where = ["kind = 'qobuz'"];
+  const where = ["kind IN ('qobuz','spotify')"];
   const params: SQLQueryBindings[] = [];
   if (filters.sourceId !== null) {
     where.push("id = ?");
     params.push(filters.sourceId);
   }
   const sources = req.ctx.db
-    .query<{ id: number }, typeof params>(`SELECT id FROM sources WHERE ${where.join(" AND ")}`)
+    .query<{ id: number; kind: string }, typeof params>(`SELECT id,kind FROM sources WHERE ${where.join(" AND ")}`)
     .all(...params);
   const combined: SearchResponse = {
     tracks: [],
     albums: [],
     artists: [],
-    fromQobuzLive: false,
+    fromQobuzLive: false, fromSpotifyLive: false, sourceErrors: [],
   };
   for (const source of sources) {
     try {
       const loaded = await loadAdapter(req.ctx.db, req.ctx.machineKey, source.id);
       if (!loaded?.adapter.search) continue;
       const result = await loaded.adapter.search(search.printable || search.original, 50);
-      combined.fromQobuzLive = true;
+      if (source.kind === "qobuz") combined.fromQobuzLive = true;
+      if (source.kind === "spotify") combined.fromSpotifyLive = true;
       const tracks = result.tracks.filter((track) =>
         matchesSearchField(track, search, filters.field)
       );
@@ -543,10 +548,9 @@ async function searchQobuz(
       combined.artists.push(...artists);
       combined.tracks.push(...tracks);
     } catch (err) {
-      console.warn(
-        `qobuz search failed source=${source.id}:`,
-        err instanceof Error ? err.message : String(err)
-      );
+      const error = source.kind === "spotify" ? spotifyImportError(err).replace("playlist import", "search") : "Qobuz search failed; try again or reconnect this source";
+      combined.sourceErrors!.push({ sourceId: source.id, error });
+      console.warn(`${source.kind} search failed source=${source.id}: ${error}`);
     }
   }
   return combined;

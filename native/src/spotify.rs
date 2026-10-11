@@ -26,6 +26,8 @@ struct Request {
     uris: Vec<String>,
     uri: Option<String>,
     range: Option<Range>,
+    query: Option<String>,
+    limit: Option<usize>,
 }
 #[derive(Deserialize)]
 struct Range {
@@ -58,8 +60,10 @@ where
             Ok(item) => item,
             Err(error) => {
                 // Service/auth failures are not evidence that a song is unavailable.
-                if !error.downcast_ref::<librespot_core::Error>()
-                    .is_some_and(|e| e.kind == librespot_core::error::ErrorKind::NotFound) {
+                if !error
+                    .downcast_ref::<librespot_core::Error>()
+                    .is_some_and(|e| e.kind == librespot_core::error::ErrorKind::NotFound)
+                {
                     lookup_error = Some(error);
                 }
                 continue;
@@ -91,6 +95,22 @@ where
     bail!("Spotify track has no available Vorbis audio")
 }
 
+fn search_query(query: &str) -> String {
+    let mut encoded = String::new();
+    for byte in query.bytes() {
+        match byte {
+            b' ' => encoded.push('+'),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
+}
 fn emit(value: &Value) -> anyhow::Result<()> {
     let mut stdout = std::io::stdout().lock();
     serde_json::to_writer(&mut stdout, value)?;
@@ -172,6 +192,7 @@ fn error_code(error: &anyhow::Error) -> &'static str {
             "Spotify audio download failed" => return "download",
             "Spotify track lookup timed out" => return "timeout",
             "Spotify track lookup failed" => return "lookup",
+            "Spotify search failed" => return "search",
             _ => {}
         }
     }
@@ -190,7 +211,7 @@ fn importable_tracks(tracks: Vec<SpotifyUri>) -> (Vec<SpotifyUri>, usize) {
 
 async fn execute(request: Request, audio_started: &mut bool) -> anyhow::Result<()> {
     ensure!(
-        matches!(request.operation.as_str(), "metadata" | "stream"),
+        matches!(request.operation.as_str(), "metadata" | "stream" | "search"),
         "Invalid Spotify operation"
     );
     ensure!(
@@ -255,6 +276,40 @@ async fn execute(request: Request, audio_started: &mut bool) -> anyhow::Result<(
                 )?;
             }
         }
+    } else if request.operation == "search" {
+        let query = request.query.as_deref().unwrap_or("").trim();
+        let limit = request.limit.unwrap_or(50);
+        ensure!(
+            (2..=256).contains(&query.chars().count()) && (1..=50).contains(&limit),
+            "Invalid Spotify search"
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            let context = session
+                .spclient()
+                .get_context(&format!("spotify:search:{}", search_query(query)))
+                .await?;
+            let mut seen = HashSet::new();
+            for entry in context.pages.iter().flat_map(|page| &page.tracks) {
+                let Some(uri) = entry.uri.as_deref() else {
+                    continue;
+                };
+                let Ok(id) = SpotifyUri::from_uri(uri) else {
+                    continue;
+                };
+                if !matches!(id, SpotifyUri::Track { .. }) || !seen.insert(id.clone()) {
+                    continue;
+                }
+                let track = Track::get(&session, &id).await?;
+                emit(&json!({"kind":"track","track":track_value(&track)?}))?;
+                if seen.len() >= limit {
+                    break;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("Spotify search failed")?
+        .context("Spotify search failed")?;
     } else {
         let uri = SpotifyUri::from_uri(
             request
@@ -459,9 +514,13 @@ mod tests {
     #[tokio::test]
     async fn v28_transient_metadata_failure_is_not_track_unavailability() {
         let uri = SpotifyUri::from_uri("spotify:track:4WFeJTXNHIS2wURtwlAkhu").unwrap();
-        let result = resolve_audio_track(uri, |_| std::future::ready(Err(
-            librespot_core::Error::unavailable("service offline").into()
-        ))).await.unwrap_err();
+        let result = resolve_audio_track(uri, |_| {
+            std::future::ready(Err(
+                librespot_core::Error::unavailable("service offline").into()
+            ))
+        })
+        .await
+        .unwrap_err();
         assert_eq!(error_code(&result), "lookup");
     }
     #[test]
@@ -479,6 +538,14 @@ mod tests {
         assert_eq!(
             error_code(&anyhow::anyhow!("private URL").context("Spotify audio download failed")),
             "download"
+        );
+    }
+    #[test]
+    fn v29_search_query_encodes_unicode_and_reserved_characters() {
+        assert_eq!(search_query("Björk & AC/DC"), "Bj%C3%B6rk+%26+AC%2FDC");
+        assert_eq!(
+            error_code(&anyhow::anyhow!("private URL").context("Spotify search failed")),
+            "search"
         );
     }
     #[test]

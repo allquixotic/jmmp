@@ -104,6 +104,8 @@ export interface FileListResponse {
 
 export interface SearchResponse extends SearchResult {
   fromQobuzLive: boolean;
+  fromSpotifyLive?: boolean;
+  sourceErrors?: Array<{ sourceId: number; error: string }>;
 }
 
 export interface PlaylistListResponse {
