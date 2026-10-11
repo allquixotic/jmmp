@@ -16,6 +16,10 @@ const SPOTIFY_ERRORS: Record<string, string> = {
   incomplete: "Spotify returned an incomplete playlist; try importing again",
   item: "Spotify playlist contains an unsupported item; only Spotify music tracks can be imported",
   limit: "Spotify playlist import exceeds 10000 tracks",
+  unavailable: "Spotify track is unavailable for this account in a supported audio format",
+  audio_key: "Spotify could not authorize this track's audio; try again or reconnect the source",
+  download: "Spotify audio download failed; check the connection and try again",
+  timeout: "Spotify track lookup timed out; try again",
 };
 export class SpotifySourceError extends Error {
   constructor(code: string) {

@@ -3,10 +3,17 @@
 //! Server-only Spotify source. Credentials arrive on stdin; stdout is a bounded pipe.
 use anyhow::{Context, bail, ensure};
 use librespot_audio::{AudioDecrypt, AudioFile};
-use librespot_core::{Session, SpotifyUri, authentication::Credentials, config::SessionConfig};
-use librespot_metadata::{Album, Metadata, Playlist, Track, audio::file::AudioFileFormat};
+use librespot_core::{
+    FileId, Session, SpotifyId, SpotifyUri, authentication::Credentials, config::SessionConfig,
+};
+use librespot_metadata::{
+    Album, Metadata, Playlist, Track,
+    audio::{file::AudioFileFormat, item::AudioItem},
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::{HashSet, VecDeque};
+use std::future::Future;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 
 #[derive(Deserialize)]
@@ -27,6 +34,51 @@ struct Range {
 }
 const HEADER: u64 = 0xa7;
 const MAX_TRACKS: usize = 10_000;
+const MAX_TRACK_LOOKUPS: usize = 32;
+
+async fn resolve_audio_track<F, Fut>(
+    uri: SpotifyUri,
+    mut load: F,
+) -> anyhow::Result<(SpotifyId, AudioFileFormat, FileId)>
+where
+    F: FnMut(SpotifyUri) -> Fut,
+    Fut: Future<Output = anyhow::Result<AudioItem>>,
+{
+    let mut pending = VecDeque::from([uri]);
+    let mut visited = HashSet::new();
+    while let Some(uri) = pending.pop_front() {
+        if visited.len() >= MAX_TRACK_LOOKUPS {
+            break;
+        }
+        if !matches!(uri, SpotifyUri::Track { .. }) || !visited.insert(uri.clone()) {
+            continue;
+        }
+        let item = match load(uri).await {
+            Ok(item) => item,
+            Err(error) if visited.len() == 1 => {
+                return Err(error.context("Spotify track unavailable"));
+            }
+            Err(_) => continue,
+        };
+        if item.availability.is_ok()
+            && let SpotifyUri::Track { id } = item.track_id
+        {
+            for format in [
+                AudioFileFormat::OGG_VORBIS_320,
+                AudioFileFormat::OGG_VORBIS_160,
+                AudioFileFormat::OGG_VORBIS_96,
+            ] {
+                if let Some(file) = item.files.get(&format) {
+                    return Ok((id, format, *file));
+                }
+            }
+        }
+        if let Some(alternatives) = item.alternatives {
+            pending.extend(alternatives.0.into_iter().take(MAX_TRACK_LOOKUPS));
+        }
+    }
+    bail!("Spotify track has no available Vorbis audio")
+}
 
 fn emit(value: &Value) -> anyhow::Result<()> {
     let mut stdout = std::io::stdout().lock();
@@ -81,11 +133,12 @@ pub async fn run() -> anyhow::Result<()> {
             }
         }
     });
-    let metadata = request.operation == "metadata";
-    let result = execute(request).await;
-    if metadata && let Err(error) = &result {
+    let mut audio_started = false;
+    let result = execute(request, &mut audio_started).await;
+    if !audio_started && let Err(error) = &result {
         // Never send raw upstream errors, URLs or account credentials to Bun.
-        // Audio mode retains its binary stream and reports failures by exit code.
+        // Before an audio header, stream failures use the same bounded protocol
+        // as metadata. Once binary audio starts, failures use only the exit code.
         let _ = emit(&json!({"kind":"error","code":error_code(error)}));
     }
     result
@@ -101,6 +154,12 @@ fn error_code(error: &anyhow::Error) -> &'static str {
             "Spotify returned an incomplete playlist" => return "incomplete",
             "Collection contains an unsupported Spotify item" => return "item",
             "Spotify import exceeds 10000 tracks" => return "limit",
+            "Spotify track unavailable" | "Spotify track has no available Vorbis audio" => {
+                return "unavailable";
+            }
+            "Spotify audio key request failed" => return "audio_key",
+            "Spotify audio download failed" => return "download",
+            "Spotify track lookup timed out" => return "timeout",
             _ => {}
         }
     }
@@ -117,7 +176,7 @@ fn importable_tracks(tracks: Vec<SpotifyUri>) -> (Vec<SpotifyUri>, usize) {
     (supported, skipped)
 }
 
-async fn execute(request: Request) -> anyhow::Result<()> {
+async fn execute(request: Request, audio_started: &mut bool) -> anyhow::Result<()> {
     ensure!(
         matches!(request.operation.as_str(), "metadata" | "stream"),
         "Invalid Spotify operation"
@@ -191,30 +250,40 @@ async fn execute(request: Request) -> anyhow::Result<()> {
                 .as_deref()
                 .context("Spotify track URI required")?,
         )?;
-        let SpotifyUri::Track { id } = uri else {
-            bail!("Spotify track required");
-        };
-        let track = Track::get(&session, &uri).await?;
-        let (format, file) = [
-            AudioFileFormat::OGG_VORBIS_320,
-            AudioFileFormat::OGG_VORBIS_160,
-            AudioFileFormat::OGG_VORBIS_96,
-        ]
-        .into_iter()
-        .find_map(|format| track.files.get(&format).map(|file| (format, *file)))
-        .context("Spotify track has no available Vorbis audio")?;
+        ensure!(
+            matches!(uri, SpotifyUri::Track { .. }),
+            "Spotify track required"
+        );
+        let lookup_session = &session;
+        let (id, format, file) = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            resolve_audio_track(uri, |uri| async move {
+                AudioItem::get_file(lookup_session, uri)
+                    .await
+                    .map_err(Into::into)
+            }),
+        )
+        .await
+        .context("Spotify track lookup timed out")??;
         let rate = match format {
             AudioFileFormat::OGG_VORBIS_320 => 40_000,
             AudioFileFormat::OGG_VORBIS_160 => 20_000,
             _ => 12_000,
         };
-        let key = session.audio_key().request(id, file).await?;
-        let file = AudioFile::open(&session, file, rate).await?;
+        let key = session
+            .audio_key()
+            .request(id, file)
+            .await
+            .context("Spotify audio key request failed")?;
+        let file = AudioFile::open(&session, file, rate)
+            .await
+            .context("Spotify audio download failed")?;
         let controller = file.get_stream_loader_controller()?;
         let size = (controller.len() as u64)
             .checked_sub(HEADER)
             .context("Invalid Spotify audio size")?;
         let (start, end, status) = byte_range(size, request.range)?;
+        *audio_started = true;
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let mut audio = AudioDecrypt::new(Some(key), file);
             audio.seek(SeekFrom::Start(HEADER + start))?;
@@ -239,6 +308,159 @@ async fn execute(request: Request) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use librespot_core::FileId;
+    use librespot_metadata::{
+        audio::{
+            file::AudioFiles,
+            item::{AudioItem, UniqueFields},
+        },
+        availability::UnavailabilityReason,
+        track::Tracks,
+    };
+    fn audio_item(
+        uri: SpotifyUri,
+        files: Vec<(AudioFileFormat, FileId)>,
+        alternatives: Vec<SpotifyUri>,
+        available: bool,
+    ) -> AudioItem {
+        AudioItem {
+            uri: uri.to_uri().unwrap(),
+            track_id: uri,
+            files: AudioFiles(files.into_iter().collect()),
+            name: "Fixture".into(),
+            covers: vec![],
+            language: vec![],
+            duration_ms: 1000,
+            is_explicit: false,
+            availability: if available {
+                Ok(())
+            } else {
+                Err(UnavailabilityReason::NotWhitelisted)
+            },
+            alternatives: Some(Tracks(alternatives)),
+            unique_fields: UniqueFields::Track {
+                artists: Default::default(),
+                album: String::new(),
+                album_artists: vec![],
+                popularity: 0,
+                number: 1,
+                disc_number: 1,
+            },
+        }
+    }
+    #[tokio::test]
+    async fn v27_relinked_track_selects_available_alternate_and_its_key_id() {
+        let original = SpotifyUri::from_uri("spotify:track:4WFeJTXNHIS2wURtwlAkhu").unwrap();
+        let blocked = SpotifyUri::from_uri("spotify:track:5sWHDYs0csV6RS48xBl0tH").unwrap();
+        let alternate = SpotifyUri::from_uri("spotify:track:6sWHDYs0csV6RS48xBl0tH").unwrap();
+        let low = FileId([1; 20]);
+        let high = FileId([2; 20]);
+        let items = std::collections::HashMap::from([
+            (
+                original.clone(),
+                audio_item(
+                    original.clone(),
+                    vec![],
+                    vec![
+                        original.clone(),
+                        blocked.clone(),
+                        alternate.clone(),
+                        alternate.clone(),
+                    ],
+                    true,
+                ),
+            ),
+            (
+                blocked.clone(),
+                audio_item(
+                    blocked,
+                    vec![(AudioFileFormat::OGG_VORBIS_320, high)],
+                    vec![],
+                    false,
+                ),
+            ),
+            (
+                alternate.clone(),
+                audio_item(
+                    alternate.clone(),
+                    vec![
+                        (AudioFileFormat::OGG_VORBIS_96, low),
+                        (AudioFileFormat::OGG_VORBIS_320, high),
+                    ],
+                    vec![],
+                    true,
+                ),
+            ),
+        ]);
+        let mut looked_up = vec![];
+        let (id, format, file) = resolve_audio_track(original, |uri| {
+            looked_up.push(uri.clone());
+            std::future::ready(Ok(items.get(&uri).unwrap().clone()))
+        })
+        .await
+        .unwrap();
+        let SpotifyUri::Track { id: expected } = alternate else {
+            unreachable!()
+        };
+        assert_eq!(id, expected);
+        assert_eq!(format, AudioFileFormat::OGG_VORBIS_320);
+        assert_eq!(file, high);
+        assert_eq!(looked_up.len(), 3);
+    }
+    #[tokio::test]
+    async fn v27_unplayable_alternate_cycles_terminate_without_duplicate_lookups() {
+        let a = SpotifyUri::from_uri("spotify:track:4WFeJTXNHIS2wURtwlAkhu").unwrap();
+        let b = SpotifyUri::from_uri("spotify:track:5sWHDYs0csV6RS48xBl0tH").unwrap();
+        let mut looked_up = vec![];
+        let result = resolve_audio_track(a.clone(), |uri| {
+            looked_up.push(uri.clone());
+            std::future::ready(Ok(audio_item(
+                uri.clone(),
+                vec![],
+                if uri == a {
+                    vec![b.clone(), b.clone()]
+                } else {
+                    vec![a.clone()]
+                },
+                true,
+            )))
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(looked_up, vec![a, b]);
+        assert_eq!(error_code(&result.unwrap_err()), "unavailable");
+    }
+    #[tokio::test]
+    async fn v27_alternate_lookup_count_is_bounded() {
+        let uris: Vec<_> = (1..=50)
+            .map(|id| SpotifyUri::from_uri(&format!("spotify:track:{id:022}")).unwrap())
+            .collect();
+        let mut lookups = 0;
+        let result = resolve_audio_track(uris[0].clone(), |uri| {
+            lookups += 1;
+            std::future::ready(Ok(audio_item(uri, vec![], uris.clone(), true)))
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(lookups, MAX_TRACK_LOOKUPS);
+    }
+    #[test]
+    fn v27_stream_failures_have_fixed_safe_error_codes() {
+        assert_eq!(
+            error_code(&anyhow::anyhow!(
+                "Spotify track has no available Vorbis audio"
+            )),
+            "unavailable"
+        );
+        assert_eq!(
+            error_code(&anyhow::anyhow!("private-key").context("Spotify audio key request failed")),
+            "audio_key"
+        );
+        assert_eq!(
+            error_code(&anyhow::anyhow!("private URL").context("Spotify audio download failed")),
+            "download"
+        );
+    }
     #[test]
     fn v20_mixed_playlist_preserves_music_order_and_reports_skipped_items() {
         let a = SpotifyUri::from_uri("spotify:track:5sWHDYs0csV6RS48xBl0tH").unwrap();

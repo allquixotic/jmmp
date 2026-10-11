@@ -175,7 +175,7 @@ test("Spotify pipe rejects failed downloads instead of treating truncation as EO
   try{await pipe.line();await expect(new Response(pipe.audio()).arrayBuffer()).rejects.toThrow("Spotify audio download failed");}finally{pipe.close();}
 });
 test("V19 Spotify native errors are mapped to fixed messages rather than raw diagnostics",async()=>{
-  for (const code of ["login", "playlist", "unknown-secret-https://secret.example"]) {
+  for (const code of ["login", "playlist", "unavailable", "audio_key", "download", "timeout", "unknown-secret-https://secret.example"]) {
     const child=Bun.spawn([process.execPath,"-e",`process.stdout.write(JSON.stringify({kind:"error",code:${JSON.stringify(code)},message:"private-refresh"})+"\\n");process.exit(1)`],{stdin:"pipe",stdout:"pipe",stderr:"ignore"});
     const pipe=new SpotifyPipe(child);
     try {

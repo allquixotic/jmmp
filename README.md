@@ -310,6 +310,8 @@ references and other unsupported items are skipped with a visible count; upload
 local audio to jmmp separately so the server has its actual bits. Saved
 credentials refresh automatically; no second sign-in is needed
 unless Spotify revokes the authorization. Audio is fetched only when played.
+Playback follows Spotify's available alternate track entries when an imported
+entry has no supported audio file, while preserving the playlist's track identity.
 
 An existing developer application can instead be used through **Advanced: use
 your own Spotify application**. Register the displayed jmmp callback in the

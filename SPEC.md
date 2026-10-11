@@ -55,6 +55,7 @@ V23: Invited passkeys obey configured WebAuthn RP/origin/user verification; succ
 V24: Packaged audio worker resolves its sibling bundled helper without a source checkout/toolchain; Spotify source bytes reach shared DSP from that worker.
 V25: Playback startup and asynchronous source failures set recoverable player error state and display an error in both compact and desktop transport.
 V26: Public now-playing status exposes only selected track title/artist; listener page refreshes metadata before listening and on track changes, preserves paused metadata, and clears idle/ended/error metadata without source audio/control requests.
+V27: Spotify playback resolves a supported, account-available file through bounded, deduplicated alternate track lookups and requests its key with that alternate's ID; failure before audio header reports a fixed useful code while worker stack traces remain visible.
 
 ## §T TASKS
 id|status|task|cites
@@ -74,6 +75,7 @@ T12|x|separate Spotify account connection and native playlist URL import; verify
 T13|x|single-use passkey invitation URL/QR, authenticated management, recipient enrollment; verify, push and deploy|V10,V11,V21,V22,V23,I.passkey-invite
 T14|x|repair packaged Spotify worker helper lookup and visible playback errors; verify, publish and deploy|V8,V10,V24,V25,I.helper,I.spotify,I.playback
 T15|x|public listener current track/artist display; verify, publish and deploy|V10,V11,V15,V26,I.public,I.playback
+T16|x|repair Spotify alternate track playback and stream startup error codes; verify, publish and deploy|V10,V13,V24,V25,V27,I.spotify,I.helper
 
 ## §B BUGS
 id|date|cause|fix
@@ -110,3 +112,4 @@ B29|2026-10-11|Native metadata aborts entire playlist on first Spotify local fil
 B30|2026-10-11|Bundled audio worker imports empty asset placeholders; Spotify fetch searches for source checkout instead of extracted helper|Reuse sibling packaged helper; isolated bundled-worker source/DSP regression (V24)
 B31|2026-10-11|Transport hides backend failures; rejected playback startup leaves state unchanged|Expose playback errors and handle startup rejection; store/browser regressions (V25)
 B32|2026-10-11|Root browser tests cannot resolve workspace-only shared package alias|Use relative shared type import; tools typecheck covers browser regressions (V10)
+B33|2026-10-11|Spotify stream picks only requested track files and discards native startup cause; relinked tracks fail despite playable alternatives|Bounded available alternate resolution, matched audio-key ID, fixed stream error codes; preserve worker stacks (V27)
