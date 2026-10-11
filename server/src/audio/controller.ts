@@ -94,16 +94,22 @@ export class PlaybackController {
     });
   }
   endTest() { return this.exclusive(async () => { if (!this.settings.enabled) await this.shutdown(); }); }
-  async listener(session: ActiveSession, base = this.settings.publicUrl): Promise<MoqListener> {
+  async listener(session: ActiveSession | null, base = this.settings.publicUrl): Promise<MoqListener> {
     if (!this.running) throw new Error(this.error ?? "MoQ output is disabled");
+    if (!session && !this.settings.publicListening) throw new Error("Public listening is disabled");
     const expires = Math.floor(Date.now() / 1000) + 3600;
-    const jwt = await new SignJWT({ did: session.did, jti: session.jti }).setProtectedHeader({ alg: "HS256" }).setAudience("jmmp-moq").setExpirationTime(expires).sign(this.key);
+    const jwt = await new SignJWT(session ? { did: session.did, jti: session.jti } : { public: true }).setProtectedHeader({ alg: "HS256" }).setAudience("jmmp-moq").setExpirationTime(expires).sign(this.key);
     const url = new URL(base); url.searchParams.set("jwt", jwt);
     const transport = new URL(url);
     // Chromium QUIC does not reliably fall back between localhost IP families.
     if (transport.protocol === "http:" && transport.hostname === "localhost") transport.hostname = this.helper?.bind.includes(":") ? "[::1]" : "127.0.0.1";
     transport.protocol = "https:";
-    return { url: url.href, webtransportUrl: transport.href, name: "jmmp.hang", fingerprint: new URL(base).protocol === "http:" ? this.helper?.fingerprint : undefined, expires };
+    const websocket = this.settings.websocketUrl ? new URL(this.settings.websocketUrl) : url;
+    websocket.searchParams.set("jwt", jwt);
+    return { url: this.settings.webtransportUrl || url.href,
+      webtransportUrl: this.settings.webtransportUrl || transport.href,
+      websocketUrl: websocket.href, name: "jmmp.hang",
+      fingerprint: !this.settings.webtransportUrl && new URL(base).protocol === "http:" ? this.helper?.fingerprint : undefined, expires };
   }
   private async start(settings: MoqSettings) {
     const secretPath = `/${crypto.randomUUID()}`;
@@ -114,14 +120,27 @@ export class PlaybackController {
         if (body.event === "end") return Response.json({});
         const token = new URLSearchParams(body.query).get("jwt"); if (!token) throw new Error("Credential required");
         const { payload } = await jwtVerify(token, this.key, { audience: "jmmp-moq", algorithms: ["HS256"] });
-        const device = this.ctx.db.query<{ jwt_jti: string }, [string]>("SELECT jwt_jti FROM session_devices WHERE id = ?").get(String(payload.did));
-        if (!device || device.jwt_jti !== payload.jti) throw new Error("Session revoked");
+        if (payload.public === true) { if (!this.settings.publicListening) throw new Error("Public listening disabled"); }
+        else {
+          const device = this.ctx.db.query<{ jwt_jti: string }, [string]>("SELECT jwt_jti FROM session_devices WHERE id = ?").get(String(payload.did));
+          if (!device || device.jwt_jti !== payload.jti) throw new Error("Session revoked");
+        }
         return Response.json({ root: "", subscribe: ["jmmp.hang"], publish: [], expires: payload.exp, revalidate: 30 });
       } catch { return new Response(null, { status: 403 }); }
     }});
     const helper = this.helper = new NativeOutput();
     helper.onFailure = error => this.fail(error);
-    try { await helper.start(settings, this.ctx.cfg.dataDir, `http://127.0.0.1:${this.authServer.port}${secretPath}`); }
+    try {
+      const cfg = this.ctx.cfg.moqUpstream;
+      let upstream: { url: string; protocol: string } | undefined;
+      if (cfg) {
+        const url = (await Bun.file(cfg.publisherUrlFile).text()).trim();
+        const parsed = new URL(url);
+        if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) throw new Error("Upstream publisher file must contain an HTTPS relay URL");
+        upstream = { url, protocol: cfg.protocol };
+      }
+      await helper.start(settings, this.ctx.cfg.dataDir, `http://127.0.0.1:${this.authServer.port}${secretPath}`, upstream);
+    }
     catch (error) { await this.shutdown(); throw error; }
   }
   private fail(error: string) {

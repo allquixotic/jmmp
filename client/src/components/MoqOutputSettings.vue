@@ -4,6 +4,10 @@
     <q-toggle v-model="draft.enabled" :disable="!status" label="Enable MoQ output" />
     <p class="text-caption">When enabled, the server plays your music and this browser listens to the same Opus broadcast as other listeners. Audio caching and offline playback are unavailable in this mode.</p>
     <q-input v-model="draft.publicUrl" :disable="!status" label="Relay URL for listeners" hint="Use HTTPS for remote listeners. HTTP is allowed on localhost." />
+    <q-toggle v-model="draft.tlsOffload" :disable="!status" label="TLS terminates at a reverse proxy or tunnel" />
+    <q-toggle v-model="draft.publicListening" :disable="!status" label="Allow public, unauthenticated listening" />
+    <q-input v-model="draft.webtransportUrl" :disable="!status" label="Managed WebTransport relay URL (optional)" hint="Subscribe-only URL. Keep publisher credentials in the server's private publisher URL file." />
+    <q-input v-model="draft.websocketUrl" :disable="!status" label="WebSocket fallback URL (optional)" hint="Use the public listener's /moq endpoint when forwarding through a tunnel." />
     <div class="row q-col-gutter-md">
       <q-input class="col" v-model="draft.bind" :disable="!status" label="Listen address" hint="127.0.0.1 for local use; 0.0.0.0 for remote connections" />
       <q-input class="col" v-model.number="draft.port" :disable="!status" type="number" label="Relay port (TCP and UDP)" />
@@ -27,7 +31,7 @@ import { DEFAULT_MOQ_SETTINGS, validateMoqSettings, type MoqListener, type MoqOu
 import { api } from "src/api";
 import { testMoqConnection } from "src/audio/moq";
 import { usePlayerStore } from "src/stores/player";
-const draft = reactive({ ...DEFAULT_MOQ_SETTINGS });
+const draft = reactive({ ...DEFAULT_MOQ_SETTINGS, tlsOffload: false, publicListening: false, webtransportUrl: "", websocketUrl: "" });
 const status = ref<MoqOutputStatus>();
 const error = ref<string>(), result = ref<string>();
 const testing = ref(false), saving = ref(false);

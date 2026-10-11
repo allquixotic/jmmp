@@ -143,6 +143,38 @@ Seeking currently decodes from the beginning and discards audio up to the target
 which can take longer on long tracks or slow sources. The controlling browser
 still owns queue advancement; an already started track can finish after it closes.
 
+For a public player behind a reverse proxy or tunnel, add separate loopback
+listeners to the server configuration:
+
+```json
+{
+  "listen": { "host": "127.0.0.1", "port": 8080 },
+  "webauthn": { "rpId": "control.example.com", "rpName": "jmmp", "origin": "https://control.example.com" },
+  "tailscaleAuto": false,
+  "publicListener": { "host": "127.0.0.1", "port": 8081, "origin": "https://radio.example.com" },
+  "moqUpstream": { "publisherUrlFile": "/etc/jmmp/publisher-url", "protocol": "moq-transport-16" }
+}
+```
+
+The example shows the relevant fields; retain the other required server config
+fields. Route the control hostname to port 8080 and the public hostname to port
+8081. The public socket exposes only the listening page, public playback status,
+subscribe credentials, assets, and `/moq` WebSocket forwarding. It has no control,
+authentication, library, upload, or source API. Public listening is off by default
+and must also be enabled in Settings → MoQ output.
+
+For a managed CDN, store its full publish URL in the private `publisherUrlFile`,
+readable only by jmmp. Set the GUI's managed WebTransport URL to the CDN's
+**subscribe-only** URL, WebSocket fallback URL to `wss://radio.example.com/moq`,
+relay URL to `https://radio.example.com`, and enable TLS offload. Keep the embedded
+relay bound to loopback. Publishing uses an outbound connection; the browser
+receives neither the publish credential nor the origin's network address.
+Cloudflare's draft-16 relay uses token paths on
+`https://draft-16.cloudflare.mediaoverquic.com/`. The fallback still uses jmmp's
+embedded relay through the tunnel. Managed CDN and WebSocket URLs are independent
+because not every CDN supports WebSockets. Set Opus bitrate to 128000 for 128 kbps.
+The connection test verifies the subscriber path before saving the setting.
+
 ## Build
 
 Build the client and server:

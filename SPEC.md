@@ -10,6 +10,8 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - Shared TypeScript decoder/DSP, Bun audio worker, bundled Rust encoder/relay.
 - Existing S3/Qobuz credentials, passkeys, cached offline playback preserved.
 - Direct dependencies use latest stable npm/crates.io releases; lockfiles updated.
+- Optional public listener isolated from authenticated control API; outbound managed MoQ publishing hides origin address.
+- Vendored librespot fork preserves upstream license/revision; direct crate dependencies latest stable.
 
 ## §I INTERFACES
 - I.output: authenticated `/api/moq` settings/status/test and listener credentials.
@@ -18,6 +20,9 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - I.helper: jmmp-managed Rust process; framed stereo 48 kHz PCM over stdin; JSON events stdout.
 - I.build: `bun run build`, development startup, native compile scripts build and ship helper plus worker assets.
 - I.typecheck: `bun run typecheck` checks client, PWA, shared/server code, tests, and build tools with strict typing.
+- I.public: optional separate listener bind serves public player/subscribe credentials; rejects control/auth/source APIs.
+- I.upstream: private publisher URL file, configurable protocol, independent listener WT/WS URLs; credentials never public.
+- I.spotify: authenticated Spotify source provisioning, metadata imports and server-owned decrypted audio via bundled librespot.
 
 ## §V INVARIANTS
 V1: Disabled MoQ spawns no helper, worker, or source fetch.
@@ -30,6 +35,9 @@ V7: Settings validated before persistence; connection test exercises helper and 
 V8: Development and packaged builds locate helper/worker automatically; process failure surfaces playback error.
 V9: MoQ subscribers share one source reader; pause/resume/seek and track changes reach all listeners.
 V10: Repository type checking succeeds without suppressing project errors or weakening strictness; dependency upgrades preserve playback/auth/build tests.
+V11: Public listener default off; enabled listener exposes only playback metadata, subscribe-only credentials, static player assets and MoQ WebSocket proxy; mutations/control/auth/source routes unreachable.
+V12: Managed relay publisher credential read from private server file, never returned to browser; WT and WS URLs independent; reverse proxy needs no origin TLS/UDP exposure.
+V13: Spotify credentials encrypted server-side; source audio fetched only by server through pinned vendored librespot; ordinary cache path and shared DSP remain usable.
 
 ## §T TASKS
 id|status|task|cites
@@ -41,6 +49,9 @@ T4|x|server local uploads; retire browser-only audio source path|V5,I.upload
 T5|x|ordinary MoQ browser playback and GUI configuration|V2,V7,V9,I.output,I.playback
 T6|x|integration tests, builds and deployment docs|V1,V2,V3,V4,V5,V6,V7,V8,V9
 T7|x|upgrade stable dependencies, fix all type errors, verify builds and browser playback|V1,V2,V3,V4,V5,V6,V7,V8,V9,V10,I.typecheck,I.build
+T8|x|public listener, managed relay publishing and independent transport URLs|V1,V2,V6,V7,V8,V9,V10,V11,V12,I.public,I.upstream
+T9|~|vendor librespot, upgrade direct crates and add Spotify source|V3,V8,V10,V13,I.spotify,I.build
+T10|.|publish generic features; deploy isolated public/control services and verify CDN playback|V6,V8,V9,V10,V11,V12,V13,I.public,I.upstream,I.spotify
 
 ## §B BUGS
 id|date|cause|fix
@@ -56,3 +67,4 @@ B8|2026-10-11|Opaque browser WS authentication failures keep retrying old relay 
 B9|2026-10-11|No repository typecheck command; generated Quasar strict types, Bun test types, and ArrayBuffer ownership unchecked|Add complete typecheck command and fix source/config/test typing (V10)
 B10|2026-10-11|Git MoQ encoder exposes unreleased grouping knob; latest vue-tsc requires old compiler API; Quasar v3 changes env/wrappers/PWA packaging|Use stable crates' per-packet groups, official TypeScript 6 compatibility API beside TypeScript 7, migrate Quasar v3 interfaces (V8,V10)
 B11|2026-10-11|Concurrent Playwright suites clean shared report directory and delete another suite's traces|Use separate standard, bundled MoQ, and compiled MoQ output directories (V10)
+B12|2026-10-11|MoQ protocol parser returns String rather than StdError; anyhow context bound fails|Map protocol parse error explicitly; compile native helper (V10,V12)

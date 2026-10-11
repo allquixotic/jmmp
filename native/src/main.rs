@@ -11,6 +11,13 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 struct Config {
     relay: moq_relay::Config,
     bitrate: u64,
+    upstream: Option<Upstream>,
+}
+
+#[derive(Deserialize)]
+struct Upstream {
+    url: String,
+    protocol: String,
 }
 
 #[tokio::main]
@@ -48,9 +55,39 @@ async fn main() -> anyhow::Result<()> {
     // 0.5.2 expects the earlier archive.track shape. This is a live broadcast:
     // omit archive discovery while retaining the media's ten-second cache.
     catalog.modify()?.archive = None;
+    let relay_origin = relay.cluster().origin.consume();
     let trigger = relay.shutdown_trigger().clone();
     let mut running = tokio::spawn(relay.with_signals(false).run());
     ready.wait().await?;
+    // Outbound only: the managed relay learns the broadcast through this
+    // connection and clients never need an address for this server.
+    let _upstream = if let Some(upstream) = config.upstream {
+        let mut connect = moq_tokio::connect::Config::default();
+        connect.url = Some(
+            upstream
+                .url
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid upstream URL"))?,
+        );
+        connect.version = vec![
+            upstream
+                .protocol
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid upstream protocol"))?,
+        ];
+        let client = connect.init(Default::default())?;
+        let connection = client
+            .publish(relay_origin)
+            .context("Missing upstream URL")?;
+        Some(
+            tokio::time::timeout(std::time::Duration::from_secs(20), connection.established())
+                .await
+                .map_err(|_| anyhow::anyhow!("Upstream MoQ connection timed out"))?
+                .map_err(|_| anyhow::anyhow!("Upstream MoQ connection failed"))?,
+        )
+    } else {
+        None
+    };
     println!("{}", serde_json::json!({"event":"ready"}));
     let clock = std::time::Instant::now();
     let read = async {

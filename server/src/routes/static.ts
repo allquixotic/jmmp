@@ -70,7 +70,7 @@ async function serveOnDisk(rel: string): Promise<Response | null> {
   return new Response(Bun.file(path), { headers: { "Content-Type": mimeFor(path) } });
 }
 
-setFallback(async (req: Req) => {
+export async function serveStatic(req: Req): Promise<Response> {
   const url = new URL(req.request.url);
   if (url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
 
@@ -89,4 +89,5 @@ setFallback(async (req: Req) => {
   if (direct) return direct;
   const fallback = await serveOnDisk("index.html");
   return fallback ?? new Response("Not found", { status: 404 });
-});
+}
+setFallback(serveStatic);

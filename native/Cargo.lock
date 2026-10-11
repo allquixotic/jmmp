@@ -1785,6 +1785,7 @@ dependencies = [
  "moq-mux",
  "moq-net",
  "moq-relay",
+ "moq-tokio",
  "serde",
  "serde_json",
  "tokio",

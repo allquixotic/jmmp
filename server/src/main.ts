@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { playbackController } from "./audio/controller.ts";
+import { startPublicListener } from "./public-listener.ts";
 import { ensureConfig } from "./config.ts";
 import { initDb } from "./db.ts";
 import { log, setLogLevel } from "./log.ts";
@@ -90,6 +91,8 @@ async function main() {
   startScheduler(ctx);
   const playback = playbackController(ctx);
   await playback.initialize();
+  const publicListener = startPublicListener(ctx);
+  if (publicListener) log.info(`public listener listening on ${cfg.publicListener!.origin}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void playback.shutdown().finally(() => process.exit(0)); });
 
   const server = Bun.serve({

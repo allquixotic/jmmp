@@ -15,6 +15,7 @@ moq-relay = { version = "0.17.2", default-features = false, features = ["noq", "
 moq-audio = { version = "0.1.10", default-features = false }
 moq-net = "0.3.10"
 moq-mux = "0.10.11"
+moq-tokio = { version = "0.19.23", default-features = false, features = ["noq", "websocket"] }
 
 [[bin]]
 name = "jmmp-moq"

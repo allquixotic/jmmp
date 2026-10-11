@@ -36,14 +36,17 @@ export async function testMoqConnection(listener: MoqListener): Promise<string> 
 }
 export function listenerOptions(listener: MoqListener): Pick<Net.Connection.ConnectProps, "url" | "webtransport" | "websocket"> {
   const url = new URL(listener.url);
-  if (!listener.fingerprint) return { url };
-  const websocket = new URL(url); websocket.protocol = "ws:";
+  const websocket = new URL(listener.websocketUrl || url);
+  websocket.protocol = ["https:", "wss:"].includes(websocket.protocol) ? "wss:" : "ws:";
   const webtransportUrl = listener.webtransportUrl ? new URL(listener.webtransportUrl) : url;
   webtransportUrl.protocol = "https:";
-  return { url: webtransportUrl, webtransport: { serverCertificateHashes: [{ value: listener.fingerprint }] }, websocket: { url: websocket } };
+  // HTTP on localhost supplies a generated certificate pin. A trusted CDN
+  // certificate uses the browser's normal PKI verification.
+  return { url: webtransportUrl, ...(listener.fingerprint ? { webtransport: { serverCertificateHashes: [{ value: listener.fingerprint }] } } : {}), websocket: { url: websocket } };
 }
 
 export class MoqPlayer extends EventTarget {
+  constructor(private publicListener = false) { super(); }
   private watch: Watch.Player | undefined;
   private connection: Net.Connection | undefined;
   private paused?: InstanceType<typeof Watch.Signals.Signal<boolean>>;
@@ -72,7 +75,7 @@ export class MoqPlayer extends EventTarget {
   private async open() {
     const mine = this.epoch;
     await checkAudioSupport();
-    const [watch, net, listener] = await Promise.all([import("@moq/watch"), import("@moq/net"), api.get<MoqListener>("/api/moq/listener")]);
+    const [watch, net, listener] = await Promise.all([import("@moq/watch"), import("@moq/net"), api.get<MoqListener>(this.publicListener ? "/api/public/moq/listener" : "/api/moq/listener")]);
     if (mine !== this.epoch) return;
     this.connection = new net.Connection({ ...listenerOptions(listener), linger: net.Time.Milli(0) });
     this.paused = new watch.Signals.Signal(false);
@@ -107,6 +110,7 @@ export class MoqPlayer extends EventTarget {
     if (mine === this.epoch) await this.send({ type: "play", trackId: track.id, position, paused, params: this.params });
   }
   private send(command: PlaybackCommand): Promise<void> {
+    if (this.publicListener) return Promise.reject(new Error("Public listeners cannot control playback"));
     const mine = this.epoch;
     const result = this.serial.then(async () => {
       if (mine !== this.epoch) return;
@@ -122,7 +126,7 @@ export class MoqPlayer extends EventTarget {
     if (this.pollBusy) return; this.pollBusy = true;
     const mine = this.epoch;
     const abort = this.pollAbort = new AbortController();
-    try { const status = await api.get<PlaybackStatus>("/api/playback", { signal: abort.signal }); if (mine === this.epoch) this.apply(status); }
+    try { const status = await api.get<PlaybackStatus>(this.publicListener ? "/api/public/moq/status" : "/api/playback", { signal: abort.signal }); if (mine === this.epoch) this.apply(status); }
     catch (error) { if (mine === this.epoch) this.error(error); }
     finally { this.pollBusy = false; }
   }

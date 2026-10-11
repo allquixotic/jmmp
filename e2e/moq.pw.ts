@@ -7,15 +7,15 @@ import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 let child: ChildProcess;
-let fixture: { url: string; token: string; relayPort: number };
+let fixture: { url: string; token: string; relayPort: number; publicUrl: string };
 test.beforeAll(async () => {
   child = spawn("bun", ["e2e/moq-fixture.ts"], { stdio: ["pipe", "pipe", "inherit"] });
   const lines = createInterface({ input: child.stdout! });
   const [line] = await once(lines, "line"); lines.close(); fixture = JSON.parse(line);
 });
 test.afterAll(async () => { if (child && child.exitCode === null) { child.kill(); await once(child, "exit"); } });
-async function authenticate(context: BrowserContext, websocket = false) {
-  await context.addCookies([{ name: "jmmp_session", value: fixture.token, url: fixture.url }]);
+async function authenticate(context: BrowserContext, websocket = false, anonymous = false) {
+  if (!anonymous) await context.addCookies([{ name: "jmmp_session", value: fixture.token, url: fixture.url }]);
   await context.addInitScript((forceWebSocket) => {
     if (forceWebSocket) Object.defineProperty(window, "WebTransport", { value: undefined });
     // Observe actual WebCodecs output, rather than treating catalog receipt as audio.
@@ -63,24 +63,25 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
   await page.goto(fixture.url + "/settings");
   await page.getByLabel("Relay URL for listeners", { exact: true }).fill("http://localhost:" + fixture.relayPort);
   await page.getByLabel("Relay port (TCP and UDP)", { exact: true }).fill(String(fixture.relayPort));
+  await page.getByLabel("WebSocket fallback URL (optional)", { exact: true }).fill(fixture.publicUrl.replace("http:", "ws:") + "/moq");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("successfully over webtransport", { timeout: 20000 });
   await page.getByRole("switch", { name: "Enable MoQ output" }).click();
+  await page.getByRole("switch", { name: "Allow public, unauthenticated listening" }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("MoQ settings saved");
   const fallback = await browser.newContext({ serviceWorkers: "block" });
-  await authenticate(fallback, true);
+  await authenticate(fallback, true, true);
   const subscriber = await fallback.newPage();
   let sourceRequests = 0;
   for (const client of [page, subscriber]) client.on("request", request => { if (new URL(request.url()).pathname.startsWith("/api/stream/")) sourceRequests++; });
   const errors: string[] = [];
   for (const client of [page, subscriber]) client.on("pageerror", error => errors.push(error.message));
   try {
-    // The fallback GUI connection test must authenticate and subscribe over WS.
-    await subscriber.goto(fixture.url + "/settings");
-    await subscriber.getByRole("button", { name: "Test connection", exact: true }).click();
-    await expect(subscriber.getByRole("status")).toContainText("successfully over websocket", { timeout: 15000 });
-    await subscriber.goto(fixture.url + "/listen");
+    // The isolated listener accepts a browser with no session cookie. Media
+    // flows through its WS proxy; private APIs remain absent on this socket.
+    expect((await subscriber.request.get(fixture.publicUrl + "/api/sources")).status()).toBe(404);
+    await subscriber.goto(fixture.publicUrl + "/public-listen");
     await subscriber.getByRole("button", { name: "Listen", exact: true }).click({ timeout: 5000 });
     // Exercise the normal controlling player, not only the separate listener page.
     await page.goto(fixture.url + "/library/songs");
@@ -89,6 +90,7 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
     await expect.poll(() => subscriber.evaluate(() => (window as any).__moqAudio.audible), { timeout: 15000 }).toBe(true);
     expect(await page.evaluate(() => (window as any).__moqAudio.opus)).toBe(true);
     expect(await subscriber.evaluate(() => (window as any).__moqAudio.opus)).toBe(true);
+    expect(await fallback.cookies()).toEqual([]);
     expect(await page.evaluate(() => (window as any).__moqAudio.webtransport)).toBe(true);
     for (const client of [page, subscriber]) expect(await client.evaluate(() => (window as any).__moqContexts.some((c: AudioContext) => c.state === "running"))).toBe(true);
     expect(sourceRequests).toBe(0);

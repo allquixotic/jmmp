@@ -26,6 +26,8 @@ export interface AppConfig {
   tailscaleAuto: boolean;
   dataDir: string;
   logLevel: "debug" | "info" | "warn" | "error";
+  publicListener?: { host: string; port: number; origin: string };
+  moqUpstream?: { publisherUrlFile: string; protocol: string };
 }
 
 export function defaultConfigPath(): string {
@@ -93,7 +95,15 @@ export function loadConfig(path: string): AppConfig {
     tailscaleAuto: raw.tailscaleAuto ?? true,
     dataDir: resolve(raw.dataDir ?? defaultDataDir()),
     logLevel: raw.logLevel ?? "info",
+    ...(raw.publicListener ? { publicListener: raw.publicListener } : {}),
+    ...(raw.moqUpstream ? { moqUpstream: raw.moqUpstream } : {}),
   };
+
+  if (cfg.publicListener) {
+    const listener = cfg.publicListener, origin = new URL(listener.origin);
+    if (!["127.0.0.1", "::1"].includes(listener.host) || !Number.isInteger(listener.port) || listener.port < 1024 || listener.port > 65535 || listener.port === cfg.listen.port || origin.protocol !== "https:" || origin.href !== origin.origin + "/") throw new Error("publicListener requires separate loopback port and HTTPS origin");
+  }
+  if (cfg.moqUpstream && (typeof cfg.moqUpstream.publisherUrlFile !== "string" || !cfg.moqUpstream.publisherUrlFile || typeof cfg.moqUpstream.protocol !== "string")) throw new Error("moqUpstream requires publisherUrlFile and protocol");
 
   mkdirSync(cfg.dataDir, { recursive: true });
   return cfg;

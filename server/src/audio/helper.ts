@@ -11,11 +11,11 @@ export class NativeOutput {
   alive = false;
   bind = "";
   onFailure: (error: string) => void = () => {};
-  async start(settings: MoqSettings, dataDir: string, authUrl: string): Promise<void> {
+  async start(settings: MoqSettings, dataDir: string, authUrl: string, upstream?: { url: string; protocol: string }): Promise<void> {
     this.bind = settings.bind;
     const assets = await audioAssets(dataDir); this.workerPath = assets.worker;
     const address = `${settings.bind.includes(":") ? `[${settings.bind}]` : settings.bind}:${settings.port}`;
-    const secure = new URL(settings.publicUrl).protocol === "https:";
+    const secure = new URL(settings.publicUrl).protocol === "https:" && !settings.tlsOffload;
     const tls = settings.certPath ? { cert: [settings.certPath], key: [settings.keyPath] } : { generate: ["localhost", "127.0.0.1", "::1"] };
     const relay = { listen: { bind: address, tls }, web: secure
       ? { https: { listen: address, cert: [settings.certPath], key: [settings.keyPath] } }
@@ -23,7 +23,7 @@ export class NativeOutput {
     const child = this.child = Bun.spawn([assets.helper], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     let stderr = "";
     void (async () => { for await (const bytes of child.stderr) stderr = (stderr + new TextDecoder().decode(bytes)).slice(-4000); })();
-    child.stdin.write(JSON.stringify({ relay, bitrate: settings.bitrate }) + "\n"); await child.stdin.flush();
+    child.stdin.write(JSON.stringify({ relay, bitrate: settings.bitrate, upstream }) + "\n"); await child.stdin.flush();
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([

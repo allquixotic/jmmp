@@ -26,8 +26,8 @@ export default defineRouter(function ({ store }) {
 
   router.beforeEach(async (to) => {
     const session = useSessionStore(store);
-    if (!session.statusLoaded) await session.refreshStatus();
     if (to.meta.auth === false) return true;
+    if (!session.statusLoaded) await session.refreshStatus();
     if (!session.hasFullSession) {
       return { name: "login", query: { next: to.fullPath } };
     }

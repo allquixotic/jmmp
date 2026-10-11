@@ -16,11 +16,12 @@ function freePort() {
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
   const port = probe.port!; probe.stop(true); return port;
 }
-const port = freePort(), relayPort = freePort();
+const port = freePort(), relayPort = freePort(), publicPort = freePort();
 const url = "http://localhost:" + port;
 const cfg = { listen: { host: "127.0.0.1", port }, tailscaleAuto: false, dataDir: dir,
   jwtSecret: crypto.randomUUID(), sessionTtlDays: 1, logLevel: "error" as const,
   webauthn: { rpId: "localhost", rpName: "jmmp test", origin: url } };
+Object.assign(cfg, { publicListener: { host: "127.0.0.1", port: publicPort, origin: "https://radio.example.com" } });
 const db = initDb(dir), machineKey = await loadOrInitMachineKey(dir);
 const { token } = await mintSession({ cfg, db, machineKey } as AppCtx, "browser-owner", "full");
 db.run("UPDATE session_devices SET is_player = 1 WHERE id = 'browser-owner'");
@@ -40,7 +41,7 @@ async function ready() { for (let attempt = 0; ; attempt++) {
   await Bun.sleep(100);
 } }
 await ready();
-console.log(JSON.stringify({ url, token, relayPort }));
+console.log(JSON.stringify({ url, token, relayPort, publicUrl: `http://localhost:${publicPort}` }));
 let pending = "";
 for await (const chunk of Bun.stdin.stream()) {
   pending += new TextDecoder().decode(chunk);

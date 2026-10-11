@@ -7,17 +7,19 @@
       <q-btn color="primary" :label="listening ? 'Disconnect' : 'Listen'" @click="toggle" />
       <p class="q-mt-md">{{ state }}</p>
       <p v-if="error" role="alert" class="text-negative">{{ error }}</p>
-      <q-btn flat label="Library" to="/" />
+      <q-btn v-if="!publicListener" flat label="Library" to="/" />
     </div>
   </q-page></q-page-container>
   </q-layout>
 </template>
 <script setup lang="ts">
 import { onUnmounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import { MoqPlayer } from "src/audio/moq";
 import PageHero from "src/components/PageHero.vue";
 const listening = ref(false), state = ref(""), error = ref("");
-const player = new MoqPlayer();
+const publicListener = useRoute().meta.publicListener === true;
+const player = new MoqPlayer(publicListener);
 player.addEventListener("error", e => { error.value = (e as CustomEvent).detail; });
 player.addEventListener("state", e => { state.value = (e as CustomEvent).detail; });
 async function toggle() {

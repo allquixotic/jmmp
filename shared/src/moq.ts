@@ -8,6 +8,13 @@ export interface MoqSettings {
   certPath: string;
   keyPath: string;
   bitrate: number;
+  /** TLS terminates at a reverse proxy; the embedded relay uses loopback HTTP. */
+  tlsOffload?: boolean;
+  /** Optional managed relay URL (may include a subscribe-only token in its path). */
+  webtransportUrl?: string;
+  /** Independent fallback, for example a WebSocket endpoint through a tunnel. */
+  websocketUrl?: string;
+  publicListening?: boolean;
 }
 export const DEFAULT_MOQ_SETTINGS: MoqSettings = {
   enabled: false, bind: "127.0.0.1", port: 4443,
@@ -25,9 +32,25 @@ export function validateMoqSettings(value: unknown): MoqSettings {
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Relay URL must be an HTTP(S) origin");
   if (url.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) throw new Error("Remote listeners require HTTPS");
   if (typeof s.certPath !== "string" || typeof s.keyPath !== "string" || !!s.certPath !== !!s.keyPath) throw new Error("Provide both TLS certificate and key paths");
-  if (url.protocol === "https:" && !s.certPath) throw new Error("HTTPS requires TLS certificate and key paths on the server");
+  for (const key of ["tlsOffload", "publicListening"] as const) {
+    if (s[key] !== undefined && typeof s[key] !== "boolean") throw new Error(`Invalid ${key}`);
+  }
+  if (s.tlsOffload && !["127.0.0.1", "::1"].includes(s.bind)) throw new Error("TLS offload requires a loopback relay bind");
+  if (url.protocol === "https:" && !s.certPath && !s.tlsOffload) throw new Error("HTTPS requires TLS certificate and key paths on the server, or TLS offload");
+  for (const [key, protocols] of [["webtransportUrl", ["https:"]], ["websocketUrl", ["wss:", "https:"]]] as const) {
+    if (s[key] !== undefined && typeof s[key] !== "string") throw new Error(`Invalid ${key}`);
+    if (s[key]) {
+      const endpoint = new URL(s[key]);
+      const localWebSocket = key === "websocketUrl" && ["ws:", "http:"].includes(endpoint.protocol) && ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname);
+      if ((!protocols.includes(endpoint.protocol as never) && !localWebSocket) || endpoint.username || endpoint.password || endpoint.hash) throw new Error(`Invalid ${key}`);
+    }
+  }
   return { enabled: s.enabled, bind: s.bind, port: s.port, publicUrl: url.origin,
-    certPath: s.certPath, keyPath: s.keyPath, bitrate: s.bitrate };
+    certPath: s.certPath, keyPath: s.keyPath, bitrate: s.bitrate,
+    ...(s.tlsOffload === undefined ? {} : { tlsOffload: s.tlsOffload }),
+    ...(s.publicListening === undefined ? {} : { publicListening: s.publicListening }),
+    ...(s.webtransportUrl ? { webtransportUrl: s.webtransportUrl } : {}),
+    ...(s.websocketUrl ? { websocketUrl: s.websocketUrl } : {}) };
 }
 export interface DspParams {
   pitchSemi: number; tempoPct: number; speedPct: number; gainDb: number; volume: number;
@@ -52,5 +75,5 @@ export type PlaybackCommand =
   | { type: "seek"; position: number }
   | { type: "pause" | "resume" | "stop" }
   | { type: "params"; params: Partial<DspParams> };
-export interface MoqListener { url: string; webtransportUrl?: string; name: string; fingerprint?: string; expires: number }
+export interface MoqListener { url: string; webtransportUrl?: string; websocketUrl?: string; name: string; fingerprint?: string; expires: number }
 export interface MoqOutputStatus { settings: MoqSettings; running: boolean; error: string | null; playback: PlaybackStatus }

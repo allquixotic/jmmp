@@ -5,6 +5,7 @@ import { defineBoot } from "#q-app";
 import { useSessionStore } from "src/stores/session";
 
 export default defineBoot(async ({ store }) => {
+  if (location.pathname === "/public-listen") return;
   const session = useSessionStore(store);
   try {
     await session.refreshStatus();

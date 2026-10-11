@@ -13,6 +13,7 @@ import { mintSession } from "../session.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import { playbackController } from "../audio/controller.ts";
 import { setLogLevel } from "../log.ts";
+import { publicRequest, startPublicListener } from "../public-listener.ts";
 import "../routes/index.ts";
 
 async function setup() {
@@ -59,6 +60,43 @@ test("V1/V7: default output stays off; invalid configuration never persists", as
     expect(() => validateDspParams({ tempoPct: -100 })).toThrow();
   } finally { await app.close(); }
 });
+
+test("V11/V12: public listener isolates all controller APIs and forwards subscribe-only WebSockets", async () => {
+  const app = await setup();
+  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = probe.port!; probe.stop(true);
+  const probe2 = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const publicPort = probe2.port!; probe2.stop(true);
+  app.ctx.cfg.publicListener = { host: "127.0.0.1", port: publicPort, origin: "https://radio.example.com" };
+  const request = (path: string, method = "GET") => publicRequest(new Request(`http://localhost${path}`, { method }), app.ctx);
+  let server: ReturnType<typeof startPublicListener>;
+  let listener: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    expect((await request("/api/public/moq/listener"))!.status).toBe(404);
+    await playbackController(app.ctx).configure({ ...DEFAULT_MOQ_SETTINGS, enabled: true, port,
+      publicListening: true, tlsOffload: true, publicUrl: "https://radio.example.com",
+      websocketUrl: "wss://radio.example.com/moq" });
+    server = startPublicListener(app.ctx);
+    for (const path of ["/api/auth/status", "/api/auth/register/options", "/api/sources", "/api/catalog", "/api/moq", "/api/playback", "/api/stream/1", "/login", "/settings"]) {
+      expect((await request(path))!.status).toBe(404);
+      expect((await request(path, "POST"))!.status).toBe(404);
+    }
+    expect((await request("/api/public/moq/listener", "POST"))!.status).toBe(404);
+    expect((await request("/"))!.headers.get("location")).toBe("https://radio.example.com/public-listen");
+    const credentials = await (await request("/api/public/moq/listener"))!.json();
+    expect(credentials.data.websocketUrl).toStartWith("wss://radio.example.com/moq?jwt=");
+    expect(JSON.parse(Buffer.from(new URL(credentials.data.websocketUrl).searchParams.get("jwt")!.split(".")[1]!, "base64url").toString()).public).toBe(true);
+    expect((await app.call("/api/moq/listener")).status).toBe(200);
+    expect((await dispatch(new Request("http://localhost/api/moq/listener"), app.ctx)).status).toBe(401);
+    listener = await connect(`http://127.0.0.1:${publicPort}/moq`);
+    expect(listener.json.audio).toBeDefined();
+    playbackController(app.ctx).status.error = "Private source URL and credentials";
+    const status = await (await request("/api/public/moq/status"))!.json();
+    expect(status.data.error).toBe("Broadcast unavailable");
+    expect(JSON.stringify(status)).not.toContain("credentials");
+    expect(() => validateMoqSettings({ ...DEFAULT_MOQ_SETTINGS, tlsOffload: true, bind: "0.0.0.0" })).toThrow();
+  } finally { await listener?.close(); server?.stop(true); await app.close(); }
+}, 60000);
 
 test("V5: local bytes precede catalog publication, survive upload, support ranges and reject traversal", async () => {
   const app = await setup();

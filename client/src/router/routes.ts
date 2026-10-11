@@ -4,6 +4,7 @@
 import type { RouteRecordRaw } from "vue-router";
 
 const routes: RouteRecordRaw[] = [
+  { path: "/public-listen", name: "public-listen", component: () => import("src/pages/ListenPage.vue"), meta: { auth: false, publicListener: true } },
   { path: "/listen", name: "listen", component: () => import("src/pages/ListenPage.vue"), meta: { auth: true } },
   {
     path: "/login",
