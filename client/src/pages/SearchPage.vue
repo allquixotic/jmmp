@@ -95,7 +95,6 @@
           :playing-track-id="player.current?.id ?? null"
           selectable
           sortable
-          :columns="visibleColumns"
           :sort-key="sortMode === 'relevance' ? null : sortMode"
           :sort-direction="sortDirection"
           :selected-track-ids="selectedTrackIds"
@@ -115,7 +114,6 @@
             :playing-track-id="player.current?.id ?? null"
             selectable
             sortable
-            :columns="visibleColumns"
             :sort-key="sortMode === 'relevance' ? null : sortMode"
             :sort-direction="sortDirection"
             :selected-track-ids="selectedTrackIds"
@@ -163,6 +161,8 @@
 </template>
 
 <script setup lang="ts">
+import { useTableColumnsStore } from "src/stores/table-columns";
+import { TABLE_COLUMNS, tableColumnLabel, type TableColumnKey } from "src/tracks/columns";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "src/stores/catalog";
@@ -184,10 +184,8 @@ import {
   type SelectionModifiers,
 } from "src/tracks/selection";
 import {
-  DEFAULT_SEARCH_COLUMNS,
   sortTracksByColumn,
   type SortDirection,
-  type TrackColumnKey,
   type TrackSortKey,
 } from "src/tracks/sort";
 
@@ -209,7 +207,8 @@ const sortDirection = ref<SortDirection>("asc");
 const groupMode = ref<"none" | "source" | "artist" | "album">("none");
 const selectedTrackIds = ref<number[]>([]);
 const selectionAnchorId = ref<number | null>(null);
-const visibleColumns = ref<TrackColumnKey[]>([...DEFAULT_SEARCH_COLUMNS]);
+const tableColumns = useTableColumnsStore();
+const visibleColumns = computed({ get: () => tableColumns.visible, set: (value: TableColumnKey[]) => tableColumns.setVisible(value) });
 let searchRunId = 0;
 const artistMenu = ref<{
   show: (event: Event, context: LibraryMenuContext) => void;
@@ -245,14 +244,7 @@ const groupOptions = [
   { label: "Artist", value: "artist" },
   { label: "Album", value: "album" },
 ];
-const columnOptions = [
-  { label: "Artist", value: "artist" },
-  { label: "Album", value: "album" },
-  { label: "Source", value: "source" },
-  { label: "Time", value: "duration" },
-  { label: "Codec", value: "codec" },
-  { label: "Quality", value: "quality" },
-];
+const columnOptions = TABLE_COLUMNS.map(column => ({ label: tableColumnLabel(column), value: column }));
 
 const visibleTracks = computed(() => {
   const tracks = result.value?.tracks ?? [];

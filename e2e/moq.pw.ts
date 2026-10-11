@@ -6,7 +6,8 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { ListenerPlaybackStatus } from "../shared/src/moq.ts";
+import type { ListenerPlaybackStatus, PlaybackStatus, PlaybackCommand } from "../shared/src/moq.ts";
+import type { Track } from "../shared/src/source.ts";
 let child: ChildProcess;
 let fixture: { url: string; token: string; relayPort: number; publicUrl: string };
 test.beforeAll(async () => {
@@ -142,6 +143,46 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
     for (const [index, client] of [page, subscriber].entries()) {
       await expect.poll(() => client.evaluate(() => (window as any).__moqAudio.frames), { timeout: 20000 }).toBeGreaterThan(samples[index]! + 5000);
     }
+    // Typed unavailability must advance the ordinary controlling MoQ player,
+    // preserving its full diagnostic after the next track starts. The relay is
+    // real; replace only the unavailable source/status boundary in this fixture.
+    const song = (await (await page.request.get(fixture.url + "/api/catalog/tracks?source=1")).json()).data.tracks[0] as Track;
+    const missing = { ...song, id: 999, sourceTrackId: "unavailable", title: "Unavailable fixture" };
+    const playlistTracks = [missing, song];
+    let queueTracks: typeof playlistTracks = [];
+    await page.route("**/api/catalog/tracks**", route => route.fulfill({ json: { ok: true, data: { tracks: playlistTracks } } }));
+    await page.route("**/api/queue", route => {
+      if (route.request().method() === "PUT") queueTracks = playlistTracks;
+      return route.fulfill({ json: { ok: true, data: { entries: queueTracks.map((track, position) => ({ position, track, addedAt: 1 })) } } });
+    });
+    let simulated = (await (await page.request.get(fixture.url + "/api/playback")).json()).data as PlaybackStatus;
+    simulated = { ...simulated, generation: simulated.generation + 100, revision: simulated.revision + 100, trackId: null, state: "idle", error: null };
+    let unavailablePending = false;
+    const starts: number[] = [];
+    const stack = "SpotifySourceError: unavailable for this account\n    at fetch(audio-worker.js:21:4)";
+    await page.route("**/api/playback", route => {
+      if (route.request().method() === "POST") {
+        const { command } = route.request().postDataJSON() as { command: PlaybackCommand };
+        if (command.type === "play") {
+          starts.push(command.trackId);
+          simulated = { ...simulated, trackId: command.trackId, state: "playing", error: null, generation: simulated.generation + 1, revision: simulated.revision + 1 };
+          delete simulated.errorCode;
+          unavailablePending = command.trackId === 999;
+        }
+      } else if (unavailablePending) {
+        unavailablePending = false;
+        simulated = { ...simulated, state: "error", error: stack, errorCode: "spotify_unavailable", generation: simulated.generation + 1, revision: simulated.revision + 1 };
+      }
+      return route.fulfill({ json: { ok: true, data: simulated } });
+    });
+    await page.goto(fixture.url + "/library/songs");
+    await page.getByRole("button", { name: "Play Unavailable fixture", exact: true }).click();
+    await expect.poll(() => starts).toEqual([999, song.id]);
+    await page.getByText("Skipped tracks (1) — errors and stack traces", { exact: true }).click();
+    await expect(page.locator(".diagnostics-history")).toContainText(stack);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.waitForTimeout(600); expect(starts).toEqual([999, song.id]);
+    await page.unroute("**/api/playback"); await page.unroute("**/api/catalog/tracks**"); await page.unroute("**/api/queue");
     // Saving the disabled setting restores source playback and browser caching.
     await page.goto(fixture.url + "/settings");
     await page.getByRole("switch", { name: "Enable MoQ output" }).click();

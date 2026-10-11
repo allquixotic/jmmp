@@ -9,30 +9,26 @@
     :class="{ reorderable, reordering: dragState !== null }"
   >
     <div class="track-list-scroller">
-      <div class="track-list-table" :style="{ minWidth: tableMinWidth }">
-        <div class="track-list-header" :style="rowGridStyle">
-          <div v-if="reorderable" class="th th-drag"></div>
-          <div class="th th-num">#</div>
+      <div ref="tableElement" class="track-list-table" :style="{ minWidth: tableMinWidth }">
+        <div ref="headerElement" class="track-list-header" :style="rowGridStyle">
           <button
-            class="th th-button th-title"
-            type="button"
-            :disabled="!sortable"
-            @click="requestSort('title')"
-          >
-            <span>Title</span>
-            <q-icon v-if="sortable" :name="sortIcon('title')" size="14px" />
-          </button>
-          <button
-            v-for="column in visibleColumns"
+            v-for="column in layoutColumns"
             :key="column"
             class="th th-button"
             :class="`th-${column}`"
+            :data-column="column"
             type="button"
-            :disabled="!sortable"
-            @click="requestSort(column)"
+            :aria-label="`${tableColumnLabel(column)} column`"
+            @click="onHeaderClick($event, column)"
+            @contextmenu.prevent="headerMenuTrigger.onContextMenu($event, column)"
+            @pointerdown="headerMenuTrigger.onPointerDown($event, column)"
+            @pointermove="headerMenuTrigger.onPointerMove"
+            @pointerup="headerMenuTrigger.onPointerEnd"
+            @pointercancel="headerMenuTrigger.onPointerEnd"
+            @keydown="headerMenuTrigger.onKeyDown($event, column)"
           >
-            <span>{{ columnLabel(column) }}</span>
-            <q-icon v-if="sortable" :name="sortIcon(column)" size="14px" />
+            <span>{{ column === 'number' ? '#' : tableColumnLabel(column) }}</span>
+            <q-icon v-if="sortable && isSortColumn(column)" :name="sortIcon(column)" size="14px" />
           </button>
         </div>
 
@@ -62,7 +58,7 @@
           @keydown="onRowMenuKeyDown($event, t, i)"
           data-playback-shortcut-surface
         >
-          <div v-if="reorderable" class="td td-drag">
+          <div v-if="layoutColumns.includes('reorder')" class="td td-drag">
             <button
               class="drag-handle"
               type="button"
@@ -78,11 +74,11 @@
               <q-tooltip>Reorder</q-tooltip>
             </button>
           </div>
-          <div class="td td-num">
+          <div v-if="layoutColumns.includes('number')" class="td td-num">
             <span v-if="playingTrackId !== t.id" class="track-num">{{ i + 1 }}</span>
             <q-icon v-else name="graphic_eq" size="16px" class="track-playing-icon" />
           </div>
-          <div class="td td-title">
+          <div v-if="layoutColumns.includes('title')" class="td td-title">
             <button
               class="track-cover-button"
               type="button"
@@ -124,8 +120,40 @@
             <template v-else>{{ columnValue(t, column) }}</template>
           </div>
         </div>
+        <div
+          v-for="divider in dividers" :key="divider.column"
+          class="column-divider" :class="{ resizing: resizeState?.column === divider.column }"
+          :style="{ left: `${divider.left}px` }"
+          role="separator" aria-orientation="vertical" tabindex="0"
+          :aria-label="`Resize ${tableColumnLabel(divider.column)} column`"
+          :aria-valuemin="minimumColumnWidth(divider.column)" :aria-valuemax="2000"
+          :aria-valuenow="Math.round(divider.width)"
+          @pointerdown.stop.prevent="startColumnResize($event, divider)"
+          @pointermove.stop.prevent="moveColumnResize"
+          @pointerup.stop.prevent="finishColumnResize"
+          @pointercancel.stop.prevent="cancelColumnResize"
+          @lostpointercapture="finishColumnResize"
+          @click.stop.prevent @dblclick.stop.prevent @contextmenu.stop.prevent
+          @keydown="resizeColumnWithKey($event, divider)"
+        ></div>
       </div>
     </div>
+
+    <q-menu ref="headerMenu" touch-position no-parent-event no-refocus :transition-duration="0" content-class="column-context-menu">
+      <q-list dense style="min-width: 200px">
+        <q-item clickable v-close-popup :disable="!columns.canHide(menuColumn)" @click="columns.toggle(menuColumn)">
+          <q-item-section>Hide {{ tableColumnLabel(menuColumn) }} column</q-item-section>
+        </q-item>
+        <q-separator />
+        <q-item-label header>Displayed columns</q-item-label>
+        <q-item v-for="column in TABLE_COLUMNS" :key="column" clickable @click="columns.toggle(column)">
+          <q-item-section avatar><q-icon :name="columns.visible.includes(column) ? 'check_box' : 'check_box_outline_blank'" /></q-item-section>
+          <q-item-section>{{ tableColumnLabel(column) }}</q-item-section>
+        </q-item>
+        <q-separator />
+        <q-item clickable v-close-popup @click="columns.reset()"><q-item-section>Reset column layout</q-item-section></q-item>
+      </q-list>
+    </q-menu>
 
     <q-menu
       ref="rowMenu"
@@ -238,7 +266,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { useTableColumnsStore } from "src/stores/table-columns";
+import { TABLE_COLUMNS, tableColumnLabel, defaultColumnWidth, minimumColumnWidth, type TableColumnKey } from "src/tracks/columns";
+import { usePressContextMenu } from "src/interactions/press-context-menu";
 import { useQuasar } from "quasar";
 import type { Playlist, Track } from "@jmmp/shared";
 import AlbumCover from "./AlbumCover.vue";
@@ -248,7 +279,6 @@ import { useQueueStore } from "src/stores/queue";
 import { useSourcesStore } from "src/stores/sources";
 import type { SelectionModifiers } from "src/tracks/selection";
 import {
-  DEFAULT_PLAYLIST_COLUMNS,
   type SortDirection,
   type TrackColumnKey,
   type TrackSortKey,
@@ -269,7 +299,6 @@ const props = defineProps<{
   selectedTrackIds?: number[];
   selectedTracks?: Track[];
   selectionScopeTracks?: Track[];
-  columns?: TrackColumnKey[];
   sortable?: boolean;
   sortKey?: TrackSortKey | null;
   sortDirection?: SortDirection;
@@ -319,7 +348,79 @@ const dragState = ref<{
 } | null>(null);
 const selectedIdSet = computed(() => new Set(props.selectedTrackIds ?? []));
 const selectedOccurrenceSet = computed(() => new Set(props.selectedTracks ?? []));
-const visibleColumns = computed(() => props.columns ?? DEFAULT_PLAYLIST_COLUMNS);
+const columns = useTableColumnsStore();
+const layoutColumns = computed(() => TABLE_COLUMNS.filter(column => columns.visible.includes(column) && (column !== "reorder" || props.reorderable)));
+const visibleColumns = computed(() => layoutColumns.value.filter((column): column is TrackColumnKey => column !== "title" && column !== "number" && column !== "reorder"));
+const headerElement = ref<HTMLElement | null>(null), tableElement = ref<HTMLElement | null>(null);
+const headerMenu = ref<{ show(evt: Event): void } | null>(null);
+const menuColumn = ref<TableColumnKey>("title");
+const headerMenuTrigger = usePressContextMenu<TableColumnKey>({ keyFor: column => column, open(event, column) {
+  menuColumn.value = column; headerMenu.value?.show(event);
+} });
+function isSortColumn(column: TableColumnKey): column is TrackSortKey { return column !== "reorder" && column !== "number"; }
+function onHeaderClick(event: MouseEvent, column: TableColumnKey) {
+  if (!headerMenuTrigger.consumeClick(event, column) && isSortColumn(column)) requestSort(column);
+}
+interface ColumnDivider { column: TableColumnKey; left: number; width: number }
+const dividers = ref<ColumnDivider[]>([]);
+const resizeState = shallowRef<{ column: TableColumnKey; pointerId: number; handle: HTMLElement; x: number; width: number; original: typeof columns.widths } | null>(null);
+let resizeObserver: ResizeObserver | undefined;
+function measureColumns() {
+  const table = tableElement.value, header = headerElement.value;
+  if (!table || !header) return;
+  const left = table.getBoundingClientRect().left;
+  dividers.value = Array.from(header.querySelectorAll<HTMLElement>("[data-column]")).map(element => {
+    const rect = element.getBoundingClientRect();
+    return { column: element.dataset.column as TableColumnKey, left: rect.right - left, width: rect.width };
+  });
+}
+function freezeColumnWidths() {
+  for (const divider of dividers.value) columns.resize(divider.column, divider.width);
+}
+function startColumnResize(event: PointerEvent, divider: ColumnDivider) {
+  if (event.button !== 0 || !event.isPrimary || resizeState.value) return;
+  const handle = event.currentTarget as HTMLElement;
+  const original = { ...columns.widths };
+  freezeColumnWidths();
+  resizeState.value = { column: divider.column, pointerId: event.pointerId, handle, x: event.clientX, width: divider.width, original };
+  handle.setPointerCapture(event.pointerId);
+}
+function moveColumnResize(event: PointerEvent) {
+  const state = resizeState.value;
+  if (!state || event.pointerId !== state.pointerId) return;
+  columns.resize(state.column, state.width + event.clientX - state.x);
+}
+function finishColumnResize(event: PointerEvent) {
+  const state = resizeState.value;
+  if (!state || event.pointerId !== state.pointerId) return;
+  if (event.type === "pointerup") moveColumnResize(event);
+  resizeState.value = null;
+  if (state.handle.hasPointerCapture(state.pointerId)) state.handle.releasePointerCapture(state.pointerId);
+  columns.persist();
+}
+function cancelColumnResize(event: PointerEvent) {
+  const state = resizeState.value;
+  if (!state || state.pointerId !== event.pointerId) return;
+  columns.widths = state.original; resizeState.value = null;
+  if (state.handle.hasPointerCapture(state.pointerId)) state.handle.releasePointerCapture(state.pointerId);
+}
+function resizeColumnWithKey(event: KeyboardEvent, divider: ColumnDivider) {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault(); event.stopPropagation(); freezeColumnWidths();
+  columns.resize(divider.column, divider.width + (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 40 : 10)); columns.persist();
+}
+onMounted(() => {
+  measureColumns();
+  resizeObserver = new ResizeObserver(measureColumns);
+  if (tableElement.value) resizeObserver.observe(tableElement.value);
+  if (headerElement.value) resizeObserver.observe(headerElement.value);
+});
+watch(() => [layoutColumns.value.join(","), JSON.stringify(columns.widths)], async () => { await nextTick(); measureColumns(); });
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  if (resizeState.value) columns.widths = resizeState.value.original;
+  resizeState.value = null;
+});
 const rowMenuTrackIds = computed(() => rowMenuTracks.value.map((track) => track.id));
 const rowMenuTitle = computed(() =>
   rowMenuTrackIds.value.length > 1
@@ -339,23 +440,14 @@ const rowMenuRemoveLabel = computed(() =>
     ? `Remove ${rowMenuTrackIds.value.length} tracks from playlist`
     : "Remove from playlist"
 );
-const gridTemplateColumns = computed(() => {
-  const cols = [
-    ...(props.reorderable ? ["32px"] : []),
-    "32px",
-    "minmax(220px, 1.5fr)",
-    ...visibleColumns.value.map(columnWidth),
-  ];
-  return cols.join(" ");
-});
-const rowGridStyle = computed(() => ({
-  gridTemplateColumns: gridTemplateColumns.value,
-}));
-const tableMinWidth = computed(() => {
-  const base = props.reorderable ? 312 : 280;
-  const extra = visibleColumns.value.reduce((sum, column) => sum + minColumnWidth(column), 0);
-  return `${base + extra}px`;
-});
+const gridTemplateColumns = computed(() => layoutColumns.value.map(column => {
+  const width = columns.widths[column];
+  if (width !== undefined) return `${width}px`;
+  const min = defaultColumnWidth(column);
+  return ["title", "artist", "album", "source"].includes(column) ? `minmax(${min}px, ${column === "title" ? 1.5 : 1}fr)` : `${min}px`;
+}).join(" "));
+const rowGridStyle = computed(() => ({ gridTemplateColumns: gridTemplateColumns.value }));
+const tableMinWidth = computed(() => `${layoutColumns.value.reduce((sum, column) => sum + (columns.widths[column] ?? defaultColumnWidth(column)), 7)}px`);
 const infoRows = computed(() => {
   const track = infoTrack.value;
   if (!track) return [];
@@ -728,28 +820,6 @@ function isDropTarget(index: number): boolean {
   return Boolean(state && state.overIndex === index && state.fromIndex !== index);
 }
 
-function columnLabel(column: TrackColumnKey): string {
-  if (column === "duration") return "Time";
-  if (column === "quality") return "Quality";
-  return column[0]!.toUpperCase() + column.slice(1);
-}
-
-function columnWidth(column: TrackColumnKey): string {
-  if (column === "duration") return "68px";
-  if (column === "codec") return "78px";
-  if (column === "quality") return "112px";
-  if (column === "source") return "minmax(110px, 0.7fr)";
-  return "minmax(130px, 1fr)";
-}
-
-function minColumnWidth(column: TrackColumnKey): number {
-  if (column === "duration") return 68;
-  if (column === "codec") return 78;
-  if (column === "quality") return 112;
-  if (column === "source") return 110;
-  return 130;
-}
-
 function columnValue(track: Track, column: TrackColumnKey): string {
   if (column === "artist") return track.artist || "";
   if (column === "album") return track.album || "";
@@ -828,21 +898,23 @@ function formatDuration(ms: number): string {
 
 .track-list-table {
   width: 100%;
+  position: relative;
+  padding-right: 7px;
 }
 
 .track-list-header,
 .track-row {
   display: grid;
   align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
+  gap: 0;
+  padding: 0;
 }
 
 @media (min-width: 600px) {
   .track-list-header,
   .track-row {
-    gap: 16px;
-    padding: 8px 12px;
+    gap: 0;
+    padding: 0;
   }
 }
 
@@ -852,14 +924,24 @@ function formatDuration(ms: number): string {
   letter-spacing: 0.06em;
   color: var(--am-text-muted);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  margin-bottom: 4px;
+  margin-bottom: 0;
 }
 
+.th, .td { min-width: 0; padding: 8px 12px; overflow: hidden; }
+.th-reorder, .td-drag, .th-number, .td-num { padding-left: 4px; padding-right: 4px; justify-content: center; }
+.th-button { user-select: none; -webkit-touch-callout: none; }
+.column-divider {
+  position: absolute; top: 0; bottom: 0; width: 12px; transform: translateX(-50%);
+  cursor: col-resize; touch-action: none; user-select: none; z-index: 2;
+}
+.column-divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: 6px; width: 1px; background: #4a4d56; }
+.column-divider:hover::after, .column-divider.resizing::after, .column-divider:focus-visible::after { background: #ff6b87; }
+.column-divider:focus-visible { outline: 1px solid #ff6b87; }
 .th-button {
   border: 0;
   background: transparent;
   color: inherit;
-  padding: 0;
+  padding: 8px 12px;
   display: inline-flex;
   gap: 4px;
   align-items: center;

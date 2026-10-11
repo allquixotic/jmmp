@@ -358,3 +358,26 @@ diagnostics returned by jmmp are redacted.
 Each helper lifetime uses a fresh broadcast name and playback instance ID;
 listeners renew their connection after a restart, and upstream relay caches
 cannot confuse the previous publication with the new one.
+
+### Spotify search and playback diagnostics
+
+Search includes live Spotify tracks using an already connected Spotify account,
+with the same source and field filters used for Qobuz. Search results can be
+played or added to native jmmp playlists without importing a Spotify playlist
+first. A failed live search shows its source error while keeping local results.
+
+Explicitly unavailable Spotify tracks advance to the next queued track in both
+ordinary and MoQ playback. Account, network, audio-key and decoder failures remain
+retryable errors. Skipped tracks retain their full error/stack in **Skipped tracks**
+under the transport; the current session retains the latest 50 failures until
+cleared. If no playable entries remain, playback stops with the final error.
+
+### Table columns
+
+Track tables share browser-local column preferences. Drag a vertical divider
+anywhere down the table with a mouse or touch to resize its left column; focused
+dividers also accept arrow keys (Shift for larger steps). Right-click or hold a
+header to hide it, restore another column, or reset the layout. Widths and
+visibility restore from localStorage on startup, including playlist and search
+**Columns** menus. At least one data column stays visible. Preferences belong to
+this browser and do not change another listener's layout.

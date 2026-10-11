@@ -83,7 +83,7 @@ T16|x|repair Spotify alternate track playback and stream startup error codes; ve
 
 T17|x|typed unavailable Spotify skipping and retained playback diagnostics|V10,V25,V27,V28,I.playback,I.spotify
 T18|x|saved-account live Spotify search|V10,V13,V29,I.spotify
-T19|.|shared resizable/hideable table columns with persisted browser preferences|V10,V30
+T19|x|shared resizable/hideable table columns with persisted browser preferences|V10,V30
 
 ## §B BUGS
 id|date|cause|fix
@@ -121,3 +121,5 @@ B30|2026-10-11|Bundled audio worker imports empty asset placeholders; Spotify fe
 B31|2026-10-11|Transport hides backend failures; rejected playback startup leaves state unchanged|Expose playback errors and handle startup rejection; store/browser regressions (V25)
 B32|2026-10-11|Root browser tests cannot resolve workspace-only shared package alias|Use relative shared type import; tools typecheck covers browser regressions (V10)
 B33|2026-10-11|Spotify stream picks only requested track files and discards native startup cause; relinked tracks fail despite playable alternatives|Bounded available alternate resolution, matched audio-key ID, fixed stream error codes; preserve worker stacks (V27)
+
+B34|2026-10-11|Animated header menu refocus races immediate keyboard reopen after hiding a header|Instant header menu transitions and no stale refocus; mouse/touch/keyboard browser regression (V30)

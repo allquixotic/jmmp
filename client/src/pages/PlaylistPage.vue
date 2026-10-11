@@ -84,7 +84,6 @@
         sortable
         :sort-key="sortKey"
         :sort-direction="sortDirection"
-        :columns="visibleColumns"
         selectable
         removable
         link-metadata
@@ -162,6 +161,8 @@
 </template>
 
 <script setup lang="ts">
+import { useTableColumnsStore } from "src/stores/table-columns";
+import { TABLE_COLUMNS, tableColumnLabel, type TableColumnKey } from "src/tracks/columns";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useQuasar } from "quasar";
@@ -174,10 +175,8 @@ import TrackList from "src/components/TrackList.vue";
 import { moveItem } from "src/playlists/reorder";
 import { removePlaylistOccurrences } from "src/playlists/remove";
 import {
-  DEFAULT_PLAYLIST_COLUMNS,
   sortTracksByColumn,
   type SortDirection,
-  type TrackColumnKey,
   type TrackSortKey,
 } from "src/tracks/sort";
 import {
@@ -195,7 +194,8 @@ const $q = useQuasar();
 
 const playlist = ref<PlaylistWithTracks | null>(null);
 const error = ref<string | null>(null);
-const visibleColumns = ref<TrackColumnKey[]>([...DEFAULT_PLAYLIST_COLUMNS]);
+const tableColumns = useTableColumnsStore();
+const visibleColumns = computed({ get: () => tableColumns.visible, set: (value: TableColumnKey[]) => tableColumns.setVisible(value) });
 const sortKey = ref<TrackSortKey | null>(null);
 const sortDirection = ref<SortDirection>("asc");
 const storageDialogOpen = ref(false);
@@ -210,14 +210,7 @@ const displayTracks = computed(() => {
   if (!sortKey.value) return tracks;
   return sortTracksByColumn(tracks, sortKey.value, sortDirection.value, sourceName);
 });
-const columnOptions = [
-  { label: "Artist", value: "artist" },
-  { label: "Album", value: "album" },
-  { label: "Source", value: "source" },
-  { label: "Time", value: "duration" },
-  { label: "Codec", value: "codec" },
-  { label: "Quality", value: "quality" },
-];
+const columnOptions = TABLE_COLUMNS.map(column => ({ label: tableColumnLabel(column), value: column }));
 const storageOptions = computed(() => [
   { label: "jmmp server", value: "local" },
   ...sources.sources
