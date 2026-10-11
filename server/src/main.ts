@@ -2,6 +2,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
+import { playbackController } from "./audio/controller.ts";
 import { ensureConfig } from "./config.ts";
 import { initDb } from "./db.ts";
 import { log, setLogLevel } from "./log.ts";
@@ -87,12 +88,18 @@ async function main() {
 
   const ctx = { cfg, db, machineKey };
   startScheduler(ctx);
+  const playback = playbackController(ctx);
+  await playback.initialize();
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void playback.shutdown().finally(() => process.exit(0)); });
 
   const server = Bun.serve({
     hostname,
     port: cfg.listen.port,
+    maxRequestBodySize: 4 * 1024 ** 3,
     ...(tlsConfig ? { tls: tlsConfig } : {}),
-    fetch(request) {
+    fetch(request, http) {
+      // A source checkout's first relay enable/test may compile Rust for minutes.
+      if (request.method !== "GET" && new URL(request.url).pathname.startsWith("/api/moq")) http.timeout(request, 0);
       return dispatch(request, ctx);
     },
     error(err) {
@@ -110,7 +117,9 @@ async function main() {
     const localServer = Bun.serve({
       hostname: configuredHost,
       port: cfg.listen.port,
-      fetch(request) {
+      maxRequestBodySize: 4 * 1024 ** 3,
+      fetch(request, http) {
+        if (request.method !== "GET" && new URL(request.url).pathname.startsWith("/api/moq")) http.timeout(request, 0);
         return dispatch(request, ctx);
       },
       error(err) {

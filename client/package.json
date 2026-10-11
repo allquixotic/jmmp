@@ -12,6 +12,9 @@
   },
   "dependencies": {
     "@jmmp/shared": "workspace:*",
+    "@moq/hang": "0.5.2",
+    "@moq/net": "0.4.2",
+    "@moq/watch": "0.6.2",
     "@quasar/extras": "^1.16.12",
     "@simplewebauthn/browser": "^13.3.0",
     "@wasm-audio-decoders/flac": "^0.2.10",

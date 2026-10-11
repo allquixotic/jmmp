@@ -47,3 +47,6 @@ Thumbs.db
 # Machine-local agent notes
 AGENTS.md
 CLAUDE.md
+
+# Rust build artifacts
+native/target/

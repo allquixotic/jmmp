@@ -6,6 +6,7 @@ import { fail, get, ok, post, readJson, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
 
 interface HistoryRow {
+  server_available: number;
   id: number;
   played_at: number;
   played_to_completion: number;
@@ -24,6 +25,7 @@ interface HistoryRow {
 function toTrack(r: HistoryRow): Track {
   return {
     id: r.track_id,
+    serverAvailable: r.server_available !== 0,
     sourceId: r.source_id,
     sourceTrackId: r.source_track_id,
     title: r.title ?? "",
@@ -48,7 +50,7 @@ get("/api/history", async (req: Req) => {
     .query<HistoryRow, typeof params>(
       `SELECT h.id, h.played_at, h.played_to_completion, h.device_id,
               t.id AS track_id, t.source_id, t.source_track_id, t.title, t.artist,
-              t.album, t.duration_ms, t.codec, t.art_hash
+              t.album, t.duration_ms, t.codec, t.art_hash, t.server_available
        FROM history h JOIN tracks t ON t.id = h.track_id
        WHERE 1=1 ${condition}
        ORDER BY h.id DESC

@@ -54,7 +54,7 @@
                   size="md"
                   :icon="player.currentPinned ? 'offline_pin' : 'favorite_border'"
                   :color="player.currentPinned ? 'primary' : undefined"
-                  :disable="!player.current"
+                  :disable="!player.current || player.moqEnabled"
                   @click="togglePin"
                 />
                 <q-btn flat round dense size="md" icon="repeat" />

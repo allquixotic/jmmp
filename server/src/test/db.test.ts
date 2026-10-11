@@ -74,7 +74,7 @@ describe("db / migrations", () => {
         []
       >("SELECT COUNT(*) AS count FROM _schema_migrations")
       .get();
-    expect(v?.count).toBe(6);
+    expect(v?.count).toBe(7);
     db.close();
   });
 });

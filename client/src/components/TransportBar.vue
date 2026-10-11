@@ -86,7 +86,7 @@
           size="sm"
           :icon="player.currentPinned ? 'offline_pin' : 'favorite_border'"
           :color="player.currentPinned ? 'primary' : undefined"
-          :disable="!player.current"
+          :disable="!player.current || player.moqEnabled"
           @click="togglePin"
         >
           <q-tooltip>{{ player.currentPinned ? "Unpin offline" : "Pin offline" }}</q-tooltip>

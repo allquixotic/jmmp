@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { addVirtualAuthenticator } from "./webauthn";
 
 // Drives the full passkey registration flow using Playwright's virtual
@@ -71,16 +72,22 @@ test("bootstrap → virtual-authenticator register → land in app", async ({ pa
   const sourceId = sourceBody.data.source.id;
 
   const tracks = [
-    { sourceId, sourceTrackId: "drag/1.mp3", title: "First Track", trackNo: 1 },
-    { sourceId, sourceTrackId: "drag/2.mp3", title: "Second Track", trackNo: 2 },
-    { sourceId, sourceTrackId: "drag/3.mp3", title: "Third Track", trackNo: 3 },
+    { sourceId, sourceTrackId: "drag/1.flac", title: "First Track", trackNo: 1 },
+    { sourceId, sourceTrackId: "drag/2.flac", title: "Second Track", trackNo: 2 },
+    { sourceId, sourceTrackId: "drag/3.flac", title: "Third Track", trackNo: 3 },
   ].map((track) => ({
     ...track,
     artist: "Tester",
     album: "Drag Album",
     durationMs: 60_000,
-    codec: "mp3",
+    codec: "flac",
   }));
+  const audio = await readFile("server/src/test/fixtures/tone.flac");
+  for (const track of tracks) {
+    const bytes = await page.request.post("/api/sources/" + sourceId + "/upload?path=" + encodeURIComponent(track.sourceTrackId),
+      { headers: { "X-jmmp-Client": "1" }, data: audio });
+    expect(bytes.status()).toBe(200);
+  }
   const uploadResp = await page.request.post("/api/catalog/upload", {
     headers: { "X-jmmp-Client": "1" },
     data: { sourceId, tracks },

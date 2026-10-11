@@ -13,10 +13,12 @@
     "init": "bun run src/main.ts init",
     "wipe-passkeys": "bun run src/main.ts wipe-passkeys",
     "test": "bun test",
-    "build": "bun build --target=bun --outdir=dist src/main.ts"
+    "build": "bun ../build/build.ts --server-only"
   },
   "dependencies": {
     "@jmmp/shared": "workspace:*",
+    "@moq/hang": "0.5.2",
+    "@moq/net": "0.4.2",
     "@simplewebauthn/server": "^13.3.0",
     "jose": "^5.9.0"
   },

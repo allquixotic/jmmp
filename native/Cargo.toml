@@ -1,0 +1,21 @@
+[package]
+name = "jmmp-moq"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.95"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+moq-relay = { git = "https://github.com/moq-dev/moq", rev = "d0736ec041e45443e67259c77aac6a9903ee5a1d", default-features = false, features = ["noq", "websocket"] }
+moq-audio = { git = "https://github.com/moq-dev/moq", rev = "d0736ec041e45443e67259c77aac6a9903ee5a1d", default-features = false }
+moq-net = { git = "https://github.com/moq-dev/moq", rev = "d0736ec041e45443e67259c77aac6a9903ee5a1d" }
+moq-mux = { git = "https://github.com/moq-dev/moq", rev = "d0736ec041e45443e67259c77aac6a9903ee5a1d" }
+
+[[bin]]
+name = "jmmp-moq"
+path = "src/main.rs"

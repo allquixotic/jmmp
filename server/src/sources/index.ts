@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import type { SourceConfig, SourceKind, SourceSecrets } from "@jmmp/shared";
 import { decryptJson } from "../crypto.ts";
+import { makeLocalAdapter } from "./local.ts";
 import { makeS3Adapter } from "./s3.ts";
 import { makeQobuzAdapter } from "./qobuz.ts";
 import type { ServerSourceAdapter } from "./types.ts";
@@ -11,7 +12,8 @@ import type { ServerSourceAdapter } from "./types.ts";
 export async function loadAdapter(
   db: Database,
   machineKey: CryptoKey,
-  sourceId: number
+  sourceId: number,
+  dataDir?: string
 ): Promise<{ adapter: ServerSourceAdapter; kind: SourceKind } | null> {
   const row = db
     .query<
@@ -34,5 +36,6 @@ export async function loadAdapter(
   if (row.kind === "s3") return { adapter: makeS3Adapter(config, secrets), kind: "s3" };
   if (row.kind === "qobuz")
     return { adapter: makeQobuzAdapter(config, secrets, sourceId), kind: "qobuz" };
+  if (row.kind === "local" && dataDir) return { adapter: makeLocalAdapter(db, dataDir, sourceId), kind: "local" };
   return null;
 }

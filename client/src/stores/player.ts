@@ -4,6 +4,7 @@
 import { defineStore } from "pinia";
 import type { Track } from "@jmmp/shared";
 import { AudioPlayer, cacheTrack, type PlayerState } from "src/audio/pipeline";
+import { RoutingPlayer } from "src/audio/routing-player";
 import { computeGainDb } from "src/audio/replaygain";
 import { useSettingsStore } from "./settings";
 import { api } from "src/api";
@@ -25,10 +26,11 @@ interface PlayerBackend extends EventTarget {
   seek(seconds: number): Promise<void>;
   setParams(p: Parameters<AudioPlayer["setParams"]>[0]): void;
   setVolume(volume: number): void;
+  refreshOutput?(reconnect?: boolean): Promise<void>;
 }
 
 let player: PlayerBackend | null = null;
-let createPlayerBackend = (): PlayerBackend => new AudioPlayer();
+let createPlayerBackend = (): PlayerBackend => new RoutingPlayer();
 let playbackWakeLock: PlaybackWakeLockController | null | undefined;
 let createPlaybackWakeLockController = (): PlaybackWakeLockController | null =>
   createPlaybackWakeLock();
@@ -41,6 +43,7 @@ interface State {
   error: string | null;
   volume: number;
   pinned: Record<string, boolean>;
+  moqEnabled: boolean;
 }
 
 export const usePlayerStore = defineStore("player", {
@@ -52,6 +55,7 @@ export const usePlayerStore = defineStore("player", {
     error: null,
     volume: 1,
     pinned: {},
+    moqEnabled: false,
   }),
   getters: {
     currentPinned: (state): boolean =>
@@ -61,6 +65,7 @@ export const usePlayerStore = defineStore("player", {
     ensure(): PlayerBackend {
       if (player) return player;
       player = createPlayerBackend();
+      player.addEventListener("mode", event => { this.moqEnabled = (event as CustomEvent).detail; });
       player.addEventListener("state", (e) => {
         this.state = (e as CustomEvent).detail;
         setPlaybackWakeLockActive(this.state === "playing");
@@ -130,8 +135,14 @@ export const usePlayerStore = defineStore("player", {
       this.volume = Math.max(0, Math.min(1, volume));
       this.ensure().setVolume(this.volume);
     },
-    async togglePinCurrent(): Promise<void> {
+    updateReplayGain(): void {
       if (!this.current) return;
+      const settings = useSettingsStore().settings;
+      this.ensure().setParams({ gainDb: computeGainDb(this.current, settings.replayGainMode, settings.replayGainPreampDb) });
+    },
+    async refreshOutput(): Promise<void> { await this.ensure().refreshOutput?.(true); },
+    async togglePinCurrent(): Promise<void> {
+      if (!this.current || this.moqEnabled) return;
       const settings = useSettingsStore();
       const id = this.current.id;
       const next = !this.pinned[String(id)];

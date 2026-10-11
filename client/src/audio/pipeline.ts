@@ -4,7 +4,6 @@
 import type { CachePolicy, Track } from "@jmmp/shared";
 import { SoundTouchNode } from "./soundtouch-node";
 import { createDecoder, type DecodedChunk, type StreamingDecoder } from "./decoders";
-import { openLocalFile } from "src/sources/local-fs";
 import { planSeek } from "./seek";
 import { evictLruIfOver, getCachedFile, storeStream } from "src/storage/opfs-cache";
 import { shouldCacheAudio } from "./cache-policy";
@@ -278,10 +277,7 @@ async function openStreamForTrack(
   startByte = 0,
   cacheOptions?: PlaybackCacheOptions
 ): Promise<ReadableStream<Uint8Array>> {
-  const file = await tryLocalFile(track);
-  if (file) {
-    return maybeCacheStream(track, file.slice(startByte).stream(), startByte, cacheOptions);
-  }
+  if (track.serverAvailable === false) throw new Error("Import this local track to the jmmp server before playback");
 
   const cached = await getCachedFile(track.id, track.fileSize);
   if (cached) return cached.slice(startByte).stream();
@@ -331,14 +327,6 @@ export async function cacheTrack(
   while (true) {
     const { done } = await reader.read();
     if (done) break;
-  }
-}
-
-async function tryLocalFile(track: Track): Promise<File | null> {
-  try {
-    return await openLocalFile(track.sourceId, track.sourceTrackId);
-  } catch {
-    return null;
   }
 }
 

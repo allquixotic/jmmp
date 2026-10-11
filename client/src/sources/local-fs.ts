@@ -3,8 +3,6 @@
 
 import { codecFromExtension, type Codec, type Track } from "@jmmp/shared";
 import { api } from "src/api";
-import type { TrackListResponse } from "@jmmp/shared";
-import { removedSourceTrackIds } from "./tombstones";
 
 const DB_NAME = "jmmp-local-handles";
 const STORE = "handles";
@@ -140,30 +138,14 @@ export async function scanLocalSource(sourceId: number): Promise<ScanResult> {
   if (!(await ensurePermission(handle))) {
     throw new Error("Permission to read the directory was denied.");
   }
-  const tracks: Array<Omit<Track, "id">> = [];
+  let uploaded = 0;
   for await (const f of walkLocalFiles(handle, "")) {
-    tracks.push({
-      sourceId,
-      sourceTrackId: f.path,
-      title: stripExt(f.name),
-      artist: "",
-      album: "",
-      durationMs: 0,
-      codec: f.codec,
-      fileSize: f.size,
-    });
+    const file = await openLocalFile(sourceId, f.path);
+    if (!file) throw new Error(`Could not read ${f.path}`);
+    await uploadLocalFile(sourceId, file, f.path); uploaded++;
   }
-  const existing = await api.get<TrackListResponse>(`/api/catalog/tracks?source=${sourceId}`);
-  const removed = removedSourceTrackIds(
-    existing.tracks.map((t) => t.sourceTrackId),
-    tracks.map((t) => t.sourceTrackId)
-  );
-  await api.post("/api/catalog/upload", {
-    sourceId,
-    tracks,
-    removedSourceTrackIds: removed,
-  });
-  return { uploaded: tracks.length, removed: removed.length };
+  return { uploaded, removed: 0 };
+
 }
 
 export async function openLocalFile(
@@ -182,7 +164,9 @@ export async function openLocalFile(
   return await fileHandle.getFile();
 }
 
-function stripExt(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(0, dot) : name;
+/** Import bytes permanently; folder handles are only an import convenience. */
+export async function uploadLocalFile(sourceId: number, file: File, path = file.name): Promise<void> {
+  if (!codecFromExtension(path)) return;
+  const uploaded = await api.post<{ track: Omit<Track, "id"> }>(`/api/sources/${sourceId}/upload?path=${encodeURIComponent(path)}`, file);
+  await api.post("/api/catalog/upload", { sourceId, tracks: [uploaded.track] });
 }

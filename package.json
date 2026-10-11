@@ -10,16 +10,22 @@
     "url": "https://github.com/allquixotic/jmmp.git"
   },
   "homepage": "https://github.com/allquixotic/jmmp#readme",
-  "workspaces": ["shared", "server", "client"],
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
   "scripts": {
     "dev": "concurrently -n server,client -c blue,green 'bun --cwd=server run dev' 'bun --cwd=client run dev'",
     "test": "bun --cwd=server run test && bun --cwd=client run test",
-    "build": "bun --cwd=client run build && bun build/embed-client.ts && bun --cwd=server run build",
-    "e2e": "playwright test -c e2e/playwright.config.ts"
+    "build": "bun build/build.ts",
+    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e:moq": "bun run build && playwright test -c e2e/moq.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
     "concurrently": "^9.1.0",
-    "typescript": "^5.7.0",
-    "@playwright/test": "^1.50.0"
+    "esbuild": "0.28.2",
+    "typescript": "^5.7.0"
   }
 }

@@ -7,6 +7,14 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    "./*": "./src/*.ts",
+    "./audio/*": "./src/audio/*.ts"
+  },
+  "dependencies": {
+    "soundtouchjs": "^0.3.0",
+    "mpg123-decoder": "^1.0.3",
+    "@wasm-audio-decoders/flac": "^0.2.10",
+    "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
+    "ogg-opus-decoder": "^1.7.3"
   }
 }

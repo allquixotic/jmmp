@@ -6,6 +6,7 @@ import { get, ok, post, put, readJson, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
 
 interface JoinedRow {
+  server_available: number;
   position: number;
   added_at: number;
   id: number;
@@ -22,6 +23,7 @@ interface JoinedRow {
 function toTrack(r: JoinedRow): Track {
   return {
     id: r.id,
+    serverAvailable: r.server_available !== 0,
     sourceId: r.source_id,
     sourceTrackId: r.source_track_id,
     title: r.title ?? "",
@@ -39,7 +41,7 @@ get("/api/queue", async (req: Req) => {
   const rows = req.ctx.db
     .query<JoinedRow, []>(
       `SELECT q.position, q.added_at, t.id, t.source_id, t.source_track_id,
-              t.title, t.artist, t.album, t.duration_ms, t.codec, t.art_hash
+              t.title, t.artist, t.album, t.duration_ms, t.codec, t.art_hash, t.server_available
        FROM queue_entries q JOIN tracks t ON t.id = q.track_id
        ORDER BY q.position`
     )

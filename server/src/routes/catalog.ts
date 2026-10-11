@@ -20,6 +20,7 @@ import { requireFullSession } from "../session.ts";
 import { loadAdapter } from "../sources/index.ts";
 
 interface TrackRow {
+  server_available: number;
   id: number;
   source_id: number;
   source_track_id: string;
@@ -74,6 +75,7 @@ interface ArtistRow {
 function trackFromRow(row: TrackRow): Track {
   return {
     id: row.id,
+    serverAvailable: row.server_available !== 0,
     sourceId: row.source_id,
     sourceTrackId: row.source_track_id,
     title: row.title ?? "",
@@ -666,7 +668,7 @@ function upsertSearchTrack(req: Req, t: Track): Track {
        )
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
        ON CONFLICT(source_id, source_track_id) DO UPDATE SET
-          title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist,
+          server_available=1, title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist,
           album=excluded.album, year=excluded.year, track_no=excluded.track_no,
           disc_no=excluded.disc_no, duration_ms=excluded.duration_ms, codec=excluded.codec,
           sample_rate=excluded.sample_rate, bit_depth=excluded.bit_depth,
@@ -763,6 +765,12 @@ post("/api/catalog/upload", async (req: Req) => {
     return fail("upload only allowed for local sources", 400);
   }
 
+  for (const track of body.tracks) {
+    if (!req.ctx.db.query("SELECT 1 FROM local_files WHERE source_id = ? AND source_track_id = ?").get(body.sourceId, track.sourceTrackId)) {
+      return fail("Upload audio to the server before adding local catalog metadata", 400);
+    }
+  }
+
   const upsert = req.ctx.db.prepare(
     `INSERT INTO tracks (
         source_id, source_track_id, title, artist, album_artist, album, year,
@@ -771,7 +779,7 @@ post("/api/catalog/upload", async (req: Req) => {
      )
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
      ON CONFLICT(source_id, source_track_id) DO UPDATE SET
-        title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist,
+        server_available=1, title=excluded.title, artist=excluded.artist, album_artist=excluded.album_artist,
         album=excluded.album, year=excluded.year, track_no=excluded.track_no,
         disc_no=excluded.disc_no, duration_ms=excluded.duration_ms, codec=excluded.codec,
         sample_rate=excluded.sample_rate, bit_depth=excluded.bit_depth,

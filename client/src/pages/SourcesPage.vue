@@ -5,13 +5,13 @@
 
 <template>
   <q-page>
-    <PageHero title="Sources" subtitle="Local folders, S3 buckets, and Qobuz.">
+    <PageHero title="Sources" subtitle="Server uploads, S3 buckets, and Qobuz.">
       <template v-slot:actions>
         <q-btn-dropdown unelevated color="primary" icon="add" label="Add source">
           <q-list>
-            <q-item clickable v-close-popup @click="showLocal = true">
+            <q-item clickable v-close-popup @click="importSourceId = undefined; showLocal = true">
               <q-item-section avatar><q-icon name="folder" /></q-item-section>
-              <q-item-section>Local directory</q-item-section>
+              <q-item-section>Upload music</q-item-section>
             </q-item>
             <q-item clickable v-close-popup @click="showS3 = true">
               <q-item-section avatar><q-icon name="cloud" /></q-item-section>
@@ -49,7 +49,7 @@
         </div>
         <div class="source-actions">
           <q-btn flat dense icon="refresh" @click="rescan(s.id, s.kind)">
-            <q-tooltip>Rescan</q-tooltip>
+            <q-tooltip>{{ s.kind === "local" ? "Import more music" : "Rescan" }}</q-tooltip>
           </q-btn>
           <q-btn flat dense icon="delete" color="negative" @click="remove(s.id)">
             <q-tooltip>Remove</q-tooltip>
@@ -58,7 +58,7 @@
       </div>
     </div>
 
-    <AddLocalDialog v-model="showLocal" @added="afterAdd" />
+    <AddLocalDialog :source-id="importSourceId" v-model="showLocal" @added="afterAdd" />
     <AddS3Dialog v-model="showS3" @added="afterAdd" />
     <AddQobuzDialog v-model="showQobuz" @added="afterAdd" />
   </q-page>
@@ -67,7 +67,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useSourcesStore } from "src/stores/sources";
-import { scanLocalSource } from "src/sources/local-fs";
 import AddLocalDialog from "src/components/AddLocalDialog.vue";
 import AddS3Dialog from "src/components/AddS3Dialog.vue";
 import AddQobuzDialog from "src/components/AddQobuzDialog.vue";
@@ -76,6 +75,7 @@ import PageHero from "src/components/PageHero.vue";
 const sources = useSourcesStore();
 const error = ref<string | null>(null);
 const showLocal = ref(false);
+const importSourceId = ref<number>();
 const showS3 = ref(false);
 const showQobuz = ref(false);
 
@@ -102,7 +102,7 @@ async function rescan(id: number, kind: string): Promise<void> {
   error.value = null;
   try {
     if (kind === "local") {
-      await scanLocalSource(id);
+      importSourceId.value = id; showLocal.value = true; return;
     } else {
       await sources.scan(id);
     }

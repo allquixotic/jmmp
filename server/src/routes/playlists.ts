@@ -39,6 +39,7 @@ interface PlaylistRow {
 }
 
 interface TrackRow {
+  server_available: number;
   id: number;
   source_id: number;
   source_track_id: string;
@@ -63,6 +64,7 @@ interface TrackRow {
 function trackOf(r: TrackRow): Track {
   return {
     id: r.id,
+    serverAvailable: r.server_available !== 0,
     sourceId: r.source_id,
     sourceTrackId: r.source_track_id,
     title: r.title ?? "",
@@ -180,7 +182,7 @@ get("/api/playlists/:id", async (req: Req) => {
       `SELECT t.id, t.source_id, t.source_track_id, t.title, t.artist,
               t.album_artist, t.album, t.year, t.track_no, t.disc_no,
               t.duration_ms, t.codec, t.sample_rate, t.bit_depth, t.channels,
-              t.file_size, t.rg_track_db, t.rg_album_db, t.art_hash
+              t.file_size, t.rg_track_db, t.rg_album_db, t.art_hash, t.server_available
        FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id
        WHERE pt.playlist_id = ?
        ORDER BY pt.position`

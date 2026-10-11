@@ -5,6 +5,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+cleanup() {
+  bun build/reset-native.ts
+  bun build/reset-spa.ts
+}
+trap cleanup EXIT
+bun build/native.ts aarch64-apple-darwin
+
 echo "==> Building client SPA"
 (cd client && bun run build)
 
@@ -17,17 +24,5 @@ bun build --compile \
   --target=bun-darwin-arm64 \
   --outfile dist/jmmp-macos-arm64 \
   server/src/main.ts
-
-echo "==> Resetting manifest stub for dev mode"
-cat > server/src/spa-manifest.ts <<'EOF'
-// Copyright 2026 Sean McNamara
-// SPDX-License-Identifier: Apache-2.0
-
-// AUTO-GENERATED stub - replaced by build/codegen-spa-manifest.ts before
-// the single-binary compile step. In dev mode it stays empty and the static
-// route falls back to on-disk client/dist/pwa.
-
-export const SPA_FILES: Record<string, string> = {};
-EOF
 
 echo "Wrote dist/jmmp-macos-arm64"

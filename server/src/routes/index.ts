@@ -6,6 +6,8 @@ import "./me.ts";
 import "./sources.ts";
 import "./qobuz.ts";
 import "./stream.ts";
+import "./uploads.ts";
+import "./moq.ts";
 import "./art.ts";
 import "./catalog.ts";
 import "./playlists.ts";

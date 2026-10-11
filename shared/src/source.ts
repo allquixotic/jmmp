@@ -59,6 +59,8 @@ export interface Album {
 }
 
 export interface Track {
+  /** False for legacy browser-only files until imported to the server. */
+  serverAvailable?: boolean;
   id: number;
   sourceId: number;
   sourceTrackId: string;

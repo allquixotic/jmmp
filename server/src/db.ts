@@ -10,6 +10,7 @@ import migration0003 from "./migrations/0003_art_blobs.sql" with { type: "text" 
 import migration0004 from "./migrations/0004_playlist_track_overlays.sql" with { type: "text" };
 import migration0005 from "./migrations/0005_playlist_local_order.sql" with { type: "text" };
 import migration0006 from "./migrations/0006_playlist_pinned.sql" with { type: "text" };
+import migration0007 from "./migrations/0007_local_files.sql" with { type: "text" };
 
 interface MigrationFile {
   version: number;
@@ -40,6 +41,7 @@ const MIGRATIONS: MigrationFile[] = [
     name: "0006_playlist_pinned.sql",
     sql: migration0006 as unknown as string,
   },
+  { version: 7, name: "0007_local_files.sql", sql: migration0007 as unknown as string },
 ];
 
 export function initDb(dataDir: string): Database {

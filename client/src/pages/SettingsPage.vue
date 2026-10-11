@@ -28,6 +28,11 @@
     </div>
 
     <div class="settings-section">
+      <h2 class="settings-section-title">MoQ output</h2>
+      <MoqOutputSettings />
+    </div>
+
+    <div class="settings-section">
       <h2 class="settings-section-title">Account</h2>
       <q-list bordered separator class="settings-card">
         <q-item clickable :to="{ name: 'passkeys' }">
@@ -47,6 +52,8 @@
 import { computed, onMounted } from "vue";
 import { useSettingsStore } from "src/stores/settings";
 import type { ReplayGainMode } from "@jmmp/shared";
+import MoqOutputSettings from "src/components/MoqOutputSettings.vue";
+import { usePlayerStore } from "src/stores/player";
 import PageHero from "src/components/PageHero.vue";
 
 const settings = useSettingsStore();
@@ -76,6 +83,8 @@ const rgLabel = computed(() => {
 
 function setRgMode(mode: ReplayGainMode): void {
   settings.patch({ replayGainMode: mode });
+  const player = usePlayerStore();
+  if (player.current) player.updateReplayGain();
 }
 </script>
 
