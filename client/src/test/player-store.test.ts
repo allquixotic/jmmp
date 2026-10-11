@@ -1,7 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import type { Track } from "@jmmp/shared";
 import {
@@ -59,6 +59,24 @@ afterEach(() => {
 });
 
 describe("player store", () => {
+  test("V25 rejected playback startup becomes a visible, retryable error", async () => {
+    setActivePinia(createPinia());
+    const fake = new FakePlayerBackend();
+    restorePlayer = installPlayerBackendForTest(fake);
+    const sources = useSourcesStore(); sources.loaded = true; sources.sources = [];
+    const failure = spyOn(fake, "play").mockRejectedValue(new Error("Spotify source unavailable"));
+    const player = usePlayerStore();
+    try {
+      await player.play(track);
+      expect(player.state).toBe("error");
+      expect(player.error).toBe("Spotify source unavailable");
+      expect(player.current?.id).toBe(track.id);
+      failure.mockResolvedValue();
+      await player.toggle();
+      expect(failure).toHaveBeenCalledTimes(2);
+      expect(player.error).toBeNull();
+    } finally { failure.mockRestore(); }
+  });
   test("starting any track immediately resets the displayed position", async () => {
     setActivePinia(createPinia());
     const fake = new FakePlayerBackend();

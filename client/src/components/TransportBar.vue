@@ -5,6 +5,9 @@
 
 <template>
   <div class="transport-bar" :class="{ compact, 'has-tabbar': compact }">
+    <q-banner v-if="player.error" role="alert" class="bg-red-1 text-red-10" dense rounded>
+      {{ player.error }}
+    </q-banner>
     <!-- Compact pill (mobile): only art + title + play. Tap to expand. -->
     <div v-if="compact" class="pill" @click="$emit('open-now-playing')">
       <div class="now-art">

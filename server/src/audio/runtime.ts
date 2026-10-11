@@ -16,13 +16,18 @@ export async function audioAssets(dataDir: string): Promise<{ helper: string; wo
     }
     return { helper, worker };
   }
+  // The extracted worker intentionally has empty embedding placeholders: its
+  // helper is already shipped beside it. Reuse that pair without a checkout or
+  // another Rust build when a source (such as Spotify) needs the native helper.
+  const helper = join(import.meta.dir, "jmmp-moq"), worker = join(import.meta.dir, "audio-worker.js");
+  if (await Bun.file(helper).exists() && await Bun.file(worker).exists()) return { helper, worker };
   let root = resolve(import.meta.dir);
   while (!(await Bun.file(join(root, "native/Cargo.toml")).exists())) {
     const parent = dirname(root); if (parent === root) throw new Error("jmmp audio assets missing; rebuild jmmp with bun run build"); root = parent;
   }
-  const helper = join(root, "native/target/debug/jmmp-moq");
+  const sourceHelper = join(root, "native/target/debug/jmmp-moq");
   // Source checkout startup builds automatically when output is first enabled.
   const build = Bun.spawn(["cargo", "build", "--locked", "--quiet", "--manifest-path", join(root, "native/Cargo.toml")], { stdout: "inherit", stderr: "inherit" });
   if (await build.exited) throw new Error("Could not build jmmp-moq; install Rust >= 1.96");
-  return { helper, worker: join(root, "server/src/audio/worker.ts") };
+  return { helper: sourceHelper, worker: join(root, "server/src/audio/worker.ts") };
 }

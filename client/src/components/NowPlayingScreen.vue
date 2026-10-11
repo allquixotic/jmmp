@@ -25,6 +25,9 @@
               <div class="np-title">{{ player.current?.title || "—" }}</div>
               <div class="np-artist">{{ player.current?.artist || "" }}</div>
               <div class="np-album">{{ player.current?.album || "" }}</div>
+              <q-banner v-if="player.error" role="alert" class="bg-red-1 text-red-10 q-mt-md" dense rounded>
+                {{ player.error }}
+              </q-banner>
 
               <div class="np-scrubber">
                 <span class="time-label mono">{{ formatTime(player.position) }}</span>

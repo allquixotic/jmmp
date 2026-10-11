@@ -52,6 +52,8 @@ V20: Mixed Spotify playlists preserve order/duplicates of supported music; local
 V21: Only full sessions mint/list/revoke invitations; 256-bit bearer secret stored only as hash, shared in URL fragment/local QR, never returned by list or cached; expiry and revocation survive restart.
 V22: Invitation grants only registration until verified passkey succeeds; challenge bound to invitation and expires in ten minutes; failed/cancelled registration and link previews preserve invitation; atomic consumption plus credential insert permits exactly one winner, including concurrent attempts.
 V23: Invited passkeys obey configured WebAuthn RP/origin/user verification; successful recipient can later sign in normally; wipe-passkeys invalidates invitations/challenges; public music listener exposes no invitation API.
+V24: Packaged audio worker resolves its sibling bundled helper without a source checkout/toolchain; Spotify source bytes reach shared DSP from that worker.
+V25: Playback startup and asynchronous source failures set recoverable player error state and display an error in both compact and desktop transport.
 
 ## §T TASKS
 id|status|task|cites
@@ -69,6 +71,7 @@ T10|x|publish generic features; deploy isolated public/control services and veri
 T11|x|default Spotify to built-in browser login; verify and deploy|V8,V10,V13,V14,V15,I.spotify,I.build
 T12|x|separate Spotify account connection and native playlist URL import; verify and deploy|V10,V13,V14,V15,V16,V17,I.spotify,I.spotify-import
 T13|x|single-use passkey invitation URL/QR, authenticated management, recipient enrollment; verify, push and deploy|V10,V11,V21,V22,V23,I.passkey-invite
+T14|x|repair packaged Spotify worker helper lookup and visible playback errors; verify, publish and deploy|V8,V10,V24,V25,I.helper,I.spotify,I.playback
 
 ## §B BUGS
 id|date|cause|fix
@@ -102,3 +105,5 @@ B26|2026-10-11|Desktop sidebar exposes individual playlists but no link to the p
 B27|2026-10-11|Bundled MoQ and librespot enable both Rustls providers; Spotify mode starts before selecting a default and panics before metadata|Select shared provider before mode dispatch; offline native TLS regression and real saved-account playlist import (V18)
 B28|2026-10-11|Spotify helper stderr ignored and import jobs discard errors; UI shows only an indefinite spinner|Typed native error codes, safe job logging/status errors, track progress and bounded client polling; regression checks (V19)
 B29|2026-10-11|Native metadata aborts entire playlist on first Spotify local file or other unsupported item|Filter unsupported references, preserve remaining music order, report skipped count; mixed native/server/browser tests (V20)
+B30|2026-10-11|Bundled audio worker imports empty asset placeholders; Spotify fetch searches for source checkout instead of extracted helper|Reuse sibling packaged helper; isolated bundled-worker source/DSP regression (V24)
+B31|2026-10-11|Transport hides backend failures; rejected playback startup leaves state unchanged|Expose playback errors and handle startup rejection; store/browser regressions (V25)

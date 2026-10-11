@@ -117,5 +117,14 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
     await expect.poll(() => sourceRequests).toBeGreaterThan(0);
     const disabled = (await (await page.request.get(fixture.url + "/api/moq")).json()).data;
     expect(disabled.settings.enabled).toBe(false); expect(disabled.running).toBe(false);
+    // Startup failures must be visible on the ordinary player's page, including
+    // the compact transport. A failure must not become an unhandled click error.
+    await page.route("**/api/moq", route => route.fulfill({status:503,contentType:"application/json",
+      body:JSON.stringify({ok:false,error:"Playback service unavailable"})}));
+    await page.getByRole("button", { name: /Play Tone|Play tone|Play Untitled/ }).first().click();
+    await expect(page.getByRole("alert")).toContainText("Playback service unavailable");
+    await page.setViewportSize({width:390,height:844});
+    await expect(page.getByRole("alert")).toBeVisible();
+    expect(errors).toEqual([]);
   } finally { await fallback.close(); }
 });

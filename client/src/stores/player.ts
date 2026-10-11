@@ -83,25 +83,32 @@ export const usePlayerStore = defineStore("player", {
       return player;
     },
     async play(track: Track): Promise<void> {
-      const session = useSessionStore();
-      if (session.hasFullSession) await session.takePlayerControl();
       this.current = track;
       this.position = 0;
       this.duration = track.durationMs / 1000;
       this.error = null;
-      const settings = useSettingsStore();
-      const gainDb = computeGainDb(
-        track,
-        settings.settings.replayGainMode,
-        settings.settings.replayGainPreampDb
-      );
-      this.ensure().setParams({ gainDb });
-      const pinned = await this.loadPinState(track.id);
-      await this.ensure().play(track, {
-        policy: await this.cachePolicyFor(track.sourceId),
-        pinned,
-        capBytes: settings.settings.opfsCacheCapBytes,
-      });
+      this.state = "loading";
+      try {
+        const session = useSessionStore();
+        if (session.hasFullSession) await session.takePlayerControl();
+        const settings = useSettingsStore();
+        const gainDb = computeGainDb(
+          track,
+          settings.settings.replayGainMode,
+          settings.settings.replayGainPreampDb
+        );
+        this.ensure().setParams({ gainDb });
+        const pinned = await this.loadPinState(track.id);
+        await this.ensure().play(track, {
+          policy: await this.cachePolicyFor(track.sourceId),
+          pinned,
+          capBytes: settings.settings.opfsCacheCapBytes,
+        });
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error);
+        this.state = "error";
+        setPlaybackWakeLockActive(false);
+      }
     },
     pause(): void {
       this.ensure().pause();
