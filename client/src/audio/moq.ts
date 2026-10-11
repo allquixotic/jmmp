@@ -5,7 +5,7 @@ import { DEFAULT_DSP_PARAMS } from "@jmmp/shared";
 import { api } from "src/api";
 import type * as Watch from "@moq/watch";
 import type * as Net from "@moq/net";
-import { AdaptiveLatency, type ListenerLatency } from "./adaptive-latency";
+import { AdaptiveLatency, RenderHealth, type ListenerLatency } from "./adaptive-latency";
 
 function deadline<T>(promise: Promise<T>, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -62,6 +62,9 @@ export class MoqPlayer extends EventTarget {
   private mediaProgressAt = 0;
   private heardAudio = false;
   private refillUntil = 0;
+  private renderHealth = new RenderHealth();
+  private gapActive = false;
+  private healthySince: number | undefined;
   private underrun: ReturnType<typeof setTimeout> | undefined;
   private paused?: InstanceType<typeof Watch.Signals.Signal<boolean>>;
   private params = { ...DEFAULT_DSP_PARAMS };
@@ -119,6 +122,7 @@ export class MoqPlayer extends EventTarget {
   private expectedAudio() { return this.lastStatus?.state === "playing" || this.lastStatus?.state === "buffering"; }
   private resetMonitoring() {
     clearTimeout(this.underrun); this.underrun = undefined; this.heardAudio = false;
+    this.gapActive = false; this.healthySince = undefined; this.renderHealth.reset();
     const now = performance.now();
     this.latency.boundary(now); this.mediaProgressAt = now;
     this.refillUntil = now + this.latency.targetMs + 500;
@@ -157,23 +161,16 @@ export class MoqPlayer extends EventTarget {
       if (next && !stalled) this.noteUnderrun();
       stalled = next;
     }));
-    this.mediaCleanups.push(media.audio.out.buffered.subscribe(() => {
-      // The buffered live edge advances as transport groups are read, before
-      // decoder backpressure. sync.timestamp advances after that backpressure:
-      // measuring it mistakes our own playout delay for growing network jitter.
-      const ranges = media.audio.out.buffered.peek();
-      const newest = ranges.at(-1)?.end;
-      if (newest !== undefined && this.expectedAudio()) { this.latency.observe(performance.now(), newest); this.updateLatency(); }
-    }));
     this.mediaCleanups.push(media.audio.out.sampleRate.subscribe(() => {
       const rate = media.audio.out.sampleRate.peek();
       if (rate) this.dispatchEvent(new CustomEvent("audio", { detail: `Opus · ${rate / 1000} kHz` }));
     }));
   }
-  private noteUnderrun() {
+  private noteUnderrun(renderGap = false) {
     const media = this.watch, generation = this.lastStatus?.generation;
-    if (!media || !this.heardAudio || this.underrun || performance.now() < this.refillUntil || this.lastStatus?.state !== "playing" ||
+    if (!media || !this.heardAudio || this.gapActive || this.underrun || performance.now() < this.refillUntil || this.lastStatus?.state !== "playing" ||
       media.audio.out.context.peek()?.state !== "running") return;
+    this.latency.disturbed(performance.now()); this.healthySince = undefined;
     // Give status polling time to identify intentional cuts/EOF. Remember even
     // a recovered gap, but exclude our own deliberate latency refill.
     const observedAt = this.mediaProgressAt, timestamp = media.audio.out.timestamp.peek();
@@ -183,15 +180,27 @@ export class MoqPlayer extends EventTarget {
       // A delayed main-thread poll is not a speaker dropout if the worklet's
       // playhead caught up with wall time. Confirm a real loss of render time.
       if (this.watch === media && this.lastStatus?.generation === generation && this.lastStatus?.state === "playing" &&
-        now >= this.refillUntil && timestamp !== undefined && current !== undefined && current >= timestamp &&
-        now - observedAt - (current - timestamp) > 100) {
-        this.latency.underrun(now); this.updateLatency();
+        now >= this.refillUntil && media.audio.out.context.peek()?.state === "running" &&
+        timestamp !== undefined && current !== undefined && current >= timestamp &&
+        (renderGap || now - observedAt - (current - timestamp) > 100)) {
+        this.recordUnderrun(now);
       }
     }, 500);
   }
+  private recordUnderrun(now: number) {
+    // A single ongoing stall is one failure, not repeated evidence that the
+    // buffer must double. Resume healthy rendering before counting another.
+    if (this.gapActive) return;
+    this.gapActive = true; this.healthySince = undefined;
+    this.latency.underrun(now); this.updateLatency();
+  }
   private updateLatency() {
     if (!this.watch || !this.netModule) return;
-    if (this.latency.targetMs > (this.delay?.peek() ?? 0)) this.refillUntil = performance.now() + this.latency.targetMs + 500;
+    if (this.latency.targetMs > (this.delay?.peek() ?? 0)) {
+      const now = performance.now();
+      this.refillUntil = now + this.latency.targetMs + 500;
+      this.latency.boundary(now); this.renderHealth.reset(); this.healthySince = undefined;
+    }
     this.delay?.set(this.netModule.Time.Milli(this.latency.targetMs));
     this.dispatchEvent(new CustomEvent<ListenerLatency>("latency", { detail: {
       playoutMs: this.watch.sync.out.delay.peek(), underruns: this.latency.underruns,
@@ -202,16 +211,29 @@ export class MoqPlayer extends EventTarget {
     if (!this.watch) return;
     const now = performance.now();
     this.latency.setRtt(this.connection?.probe.peek()?.rtt);
-    if (this.expectedAudio()) this.latency.tick(now);
+    const context = this.watch.audio.out.context.peek();
+    if (this.lastStatus?.state === "playing" && context?.state === "running" && this.heardAudio && now >= this.refillUntil) {
+      const health = this.renderHealth.sample(Number.isFinite(context.currentTime) ? context.currentTime * 1000 : now,
+        this.watch.audio.out.timestamp.peek());
+      if (health === "healthy") {
+        this.healthySince ??= now;
+        if (now - this.healthySince >= 500) this.gapActive = false;
+        this.latency.healthy(now);
+      } else {
+        this.latency.disturbed(now); this.healthySince = undefined;
+        if (health === "gap") this.noteUnderrun(true);
+      }
+      this.latency.tick(now);
+    } else { this.latency.disturbed(now); this.renderHealth.reset(); this.healthySince = undefined; }
     // Some upstream ring implementations leave `stalled` false on exhaustion.
     // A stopped render playhead still identifies a real gap, including silent
     // songs (their timestamps advance normally). One pending observation at a time.
     if (now - this.mediaProgressAt > 150) this.noteUnderrun();
     this.updateLatency();
-    // A subscription may finish while its session/catalog remains live. Rearm
-    // only when audio should be arriving; silence while idle is intentional.
-    if (this.lastStatus?.state === "playing" && this.watch.audio.out.context.peek()?.state === "running" &&
-      now - this.mediaProgressAt > Math.max(8000, this.latency.targetMs + 3000)) this.restartMedia();
+    // A broken ring/decoder can survive media rearming. Recover the entire
+    // receiver automatically with fresh credentials, retaining learned delay.
+    if (this.lastStatus?.state === "playing" && (!context || context.state === "running") &&
+      now - this.mediaProgressAt > Math.max(8000, this.latency.targetMs + 3000)) this.reconnect();
   }
   private reconnect() {
     if (this.retry) return;

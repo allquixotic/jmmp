@@ -144,8 +144,14 @@ decodes it with the shared decoder code, applies the shared SoundTouch DSP in a
 Bun worker, and sends bounded 48 kHz stereo PCM through a private pipe to Rust.
 Rust encodes Opus (192 kbps by default) and publishes one broadcast. The browser
 uses the upstream MoQ player for buffering and clock adjustment. Each listener
-adds its own adaptive jitter budget: arrival bursts and speaker-buffer underruns
-increase delay promptly; stable playback lowers it cautiously. The total playout
+adds its own adaptive jitter budget: rendered speaker-buffer underruns increase
+delay promptly, with an RTT-based floor. Decoder-paced buffered ranges never
+inflate the jitter estimate. Each browser saves its learned budget and safety floor
+in localStorage, including across page refreshes. Ten uninterrupted minutes of
+healthy rendering permit a cautious reduction of at most 5 ms per minute; pauses,
+dropouts, reconnects and refreshes restart that quiet period. Budgets that caused
+dropouts establish a safety floor, so the receiver settles instead of repeatedly
+probing the same failing delay. The total playout
 target, including codec/worklet buffering, appears on the listening page. A stable
 low-RTT connection can approach 50 ms; jittery connections may buffer up to about
 five seconds. The encoded backlog stays bounded and does not alter another
@@ -155,7 +161,9 @@ about total network/device latency.
 Track selection and seek rearm the audio pipeline on the existing transport.
 Listeners stay connected while idle, at track boundaries, and during temporary
 source failures, then resume when audio returns. Playback status polling supplies
-the generation notification; no separate SSE connection is needed. Extra listeners
+the generation notification; no separate SSE connection is needed. A continuously
+stopped render clock also triggers automatic full receiver recovery, retaining its
+learned budget; one ongoing stall cannot repeatedly inflate that budget. Extra listeners
 can open /listen after signing in with their own jmmp passkey; their credentials
 allow subscription only.
 

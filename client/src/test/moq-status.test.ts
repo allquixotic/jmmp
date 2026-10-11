@@ -92,3 +92,37 @@ test("V32 a stopped render playhead adapts even when the ring reports no stall; 
     expect(internals.latency.underruns).toBe(1);
   } finally { backend.dispose(); }
 });
+
+test("V34 one continuous stall raises once and triggers full receiver recovery instead of endless rearming", async () => {
+  const backend = new MoqPlayer(true);
+  const internals = backend as unknown as {
+    watch: unknown; netModule: unknown; delay: unknown; lastStatus: PlaybackStatus;
+    heardAudio: boolean; mediaProgressAt: number; refillUntil: number;
+    latency: { targetMs: number; underruns: number }; monitorMedia(): void; reconnect(): void;
+  };
+  internals.watch = { audio: { out: { context: { peek: () => ({ state: "running" }) }, stalled: { peek: () => false }, timestamp: { peek: () => 100 } } },
+    sync: { out: { delay: { peek: () => 100 } } }, close() {} };
+  internals.netModule = { Time: { Milli: (value: number) => value } };
+  let requested = 100, recoveries = 0;
+  internals.delay = { peek: () => requested, set: (value: number) => { requested = value; } };
+  internals.reconnect = () => { recoveries++; };
+  internals.lastStatus = { instanceId: "one", revision: 1, generation: 1, trackId: null,
+    position: 0, duration: 100, state: "playing", params: DEFAULT_DSP_PARAMS, error: null };
+  internals.heardAudio = true; internals.mediaProgressAt = performance.now() - 1000; internals.refillUntil = 0;
+  try {
+    internals.monitorMedia(); await Bun.sleep(550);
+    const learned = internals.latency.targetMs;
+    expect(internals.latency.underruns).toBe(1);
+    internals.refillUntil = 0;
+    for (let i = 0; i < 10; i++) internals.monitorMedia();
+    await Bun.sleep(550);
+    expect(internals.latency.underruns).toBe(1);
+    expect(internals.latency.targetMs).toBe(learned);
+    internals.mediaProgressAt = performance.now() - 9000; internals.monitorMedia();
+    expect(recoveries).toBe(1);
+    for (const state of ["paused", "idle", "ended", "buffering"] as const) {
+      internals.lastStatus.state = state; internals.monitorMedia();
+    }
+    expect(recoveries).toBe(1);
+  } finally { backend.dispose(); }
+});

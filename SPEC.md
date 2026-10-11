@@ -61,7 +61,9 @@ V28: Only typed Spotify unavailability advances the current queue once per attem
 V29: Live Spotify search reuses saved server credentials, bounds queries/results/timeouts, persists playable catalog IDs and respects source/field filters without a developer app.
 V30: All track tables expose continuous column dividers, mouse/touch/keyboard resizing and header right-click/long-press visibility menus; validated localStorage preferences restore on startup; hidden columns remain recoverable.
 V31: Connected listeners rearm media on accepted playback generations, including repeated same-track selection and seek; idle/ended/source gaps remain subscribed, stale status never rearms, and stalled subscriptions recover without another Listen click.
-V32: Each listener independently measures arrival jitter and rendered underruns; bounded playout delay rises promptly and falls cautiously, ignores intentional silence/content boundaries, and retains learned delay across media/transport recovery without changing server DSP or other clients.
+V32: Each listener independently measures rendered underruns with RTT floor; bounded playout delay rises promptly and falls cautiously, ignores intentional silence/content boundaries, and retains learned delay across media/transport recovery without changing server DSP or other clients.
+V33: Versioned, bounded per-origin localStorage retains learned receiver delay and failed-budget floor across refresh; invalid/blocked storage never interrupts playback; quiet evidence restarts after refresh.
+V34: Delay decreases require ten uninterrupted minutes of healthy rendering, then at most 5ms/minute above failed-budget safety floor; recovered short gaps restart quiet evidence; one continuous stall counts once; refills never feed estimator; persistent stopped render clock rebuilds full receiver automatically without a Listen click.
 
 ## §T TASKS
 id|status|task|cites
@@ -87,6 +89,7 @@ T17|x|typed unavailable Spotify skipping and retained playback diagnostics|V10,V
 T18|x|saved-account live Spotify search|V10,V13,V29,I.spotify
 T19|x|shared resizable/hideable table columns with persisted browser preferences|V10,V30
 T20|x|repair listener discontinuity recovery and add per-client adaptive playout; verify, push and deploy|V9,V10,V31,V32,I.public,I.playback
+T21|x|persist learned delay, stabilize adaptive probes and automatically recover stuck receivers; verify, push and deploy|V10,V33,V34,I.public
 
 ## §B BUGS
 id|date|cause|fix
@@ -135,3 +138,9 @@ B40|2026-10-11|Browser jitter route misses native WebSocketStream, leaving delay
 B41|2026-10-11|Upstream shared ring leaves stalled=false on exhaustion, hiding rendered underruns|Observe stopped render playhead too; validate generation/state after status poll and exclude deliberate refills (V32)
 B42|2026-10-11|Delayed main-thread playhead delivery can resemble a speaker underrun|Confirm lost render time against advancing worklet clock; exclude caught-up signals and pending intentional refills (V32)
 B43|2026-10-11|Cold-start decay immediately removes latency learned from jitter unless an underrun was counted|Apply thirty-second cooldown to proactive jitter growth too; quantize growth to avoid repeated tiny refills (V32)
+B44|2026-10-11|Arrival-only decay ignores recovered render gaps; failed budgets retried and client learning discarded on refresh|Persist validated delay/safety floor; require render-clock health; ten-minute quiet period and 5ms/minute probes (V33,V34)
+B45|2026-10-11|Repeated observations multiply one ongoing stall; watchdog only rearms existing decoder/ring and cannot repair broken receiver|One increase per gap episode; exclude refill feedback; rebuild full connection/player after bounded stalled-clock deadline; rendered high-delay/blackhole regression (V34)
+B46|2026-10-11|Short browser fixture reaches EOF before slower learning checks; worklet console output not delivered consistently to page|Lengthen fixture through ordinary shared DSP; inspect actual worklet init messages and speaker output (V10,V34)
+B47|2026-10-11|Route-fulfilled isolated browser document lacks local address space; Chromium blocks fixture relay access|Grant local-network permission only in isolated localhost test context (V10,V34)
+B48|2026-10-11|Merged buffered ranges include decode pacing/reconnect backlog; apparent arrival jitter raises 1875ms to 4025ms after only one underrun|Use actual render-clock loss and RTT floor; high-delay recovery regression asserts one increase per continuous gap (V32,V34)
+B49|2026-10-11|Jitter regression requires guessed delay despite continuous output; pre-reconnect render count can mask failed recovery|Assert growth plus seamless subsequent pauses; require fresh rendered output after replacement connection (V32,V34)

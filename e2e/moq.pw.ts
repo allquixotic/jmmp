@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ListenerPlaybackStatus, PlaybackStatus, PlaybackCommand } from "../shared/src/moq.ts";
 import type { Track } from "../shared/src/source.ts";
+import { LATENCY_STORAGE_KEY } from "../client/src/audio/adaptive-latency.ts";
 let child: ChildProcess;
 let fixture: { url: string; token: string; relayPort: number; publicUrl: string };
 test.beforeAll(async () => {
@@ -21,7 +22,7 @@ async function authenticate(context: BrowserContext, websocket = false, anonymou
   await context.addInitScript((forceWebSocket) => {
     if (forceWebSocket) Object.defineProperty(window, "WebTransport", { value: undefined });
     // Observe actual WebCodecs output, rather than treating catalog receipt as audio.
-    const counters = { frames: 0, audible: false, opus: false, webtransport: false, rendered: 0, frequency: 0, silentTicks: 0, underruns: 0 };
+    const counters = { frames: 0, audible: false, opus: false, webtransport: false, rendered: 0, frequency: 0, silentTicks: 0, underruns: 0, bufferPath: "" };
     (window as any).__moqAudio = counters;
     const NativeEvent = window.CustomEvent;
     window.CustomEvent = class<T> extends NativeEvent<T> {
@@ -49,6 +50,12 @@ async function authenticate(context: BrowserContext, websocket = false, anonymou
       constructor(context: BaseAudioContext, name: string, options?: AudioWorkletNodeOptions) {
         super(context, name, options);
         if (name !== "render") return;
+        const post = this.port.postMessage;
+        this.port.postMessage = function (this: MessagePort, value: unknown, options?: Transferable[] | StructuredSerializeOptions) {
+          const message = value as { type?: string };
+          if (message?.type === "init-shared" || message?.type === "init-post") counters.bufferPath = message.type;
+          return Reflect.apply(post, this, options === undefined ? [value] : [value, options]);
+        };
         const analyser = context.createAnalyser(); analyser.fftSize = 2048; this.connect(analyser);
         const wave = new Float32Array(2048); let heard = false;
         const probe = setInterval(() => {
@@ -321,12 +328,13 @@ test("V32 jittery and stable listeners choose independent buffers and keep rende
       await client.goto(fixture.publicUrl + "/public-listen");
       await client.getByRole("button", { name: "Listen", exact: true }).click();
     }
-    expect((await page.request.post(fixture.url + "/api/playback", { headers, data: { command: { type: "play", trackId: song.id } } })).ok()).toBe(true);
+    expect((await page.request.post(fixture.url + "/api/playback", { headers, data: { command: { type: "play", trackId: song.id,
+      params: { pitchSemi: 0, tempoPct: -50, speedPct: 0, gainDb: 0, volume: 1 } } } })).ok()).toBe(true);
     for (const client of [stable, jittery]) await expect.poll(() => client.evaluate(() => (window as any).__moqAudio.rendered)).toBeGreaterThan(5);
     perturb = true;
-    // Allow initial underruns while learning. Once it covers a full pause, two
-    // further delivery pauses must render continuously without more gaps.
-    await expect.poll(() => budget(jittery), { timeout: 10000 }).toBeGreaterThan(400);
+    // Allow initial underruns while learning. Judge the resulting budget by
+    // real continuity through further pauses, rather than a guessed delay.
+    await expect.poll(() => budget(jittery), { timeout: 10000 }).toBeGreaterThan(200);
     // Local CI audio can also underrun under CPU load. Keep the strict low
     // latency assertion when its renderer stayed healthy, and compare the two
     // receivers independently even if the unperturbed renderer needed recovery.
@@ -346,5 +354,91 @@ test("V32 jittery and stable listeners choose independent buffers and keep rende
     await test.info().attach("receiver-timeline", { body: JSON.stringify(timeline, null, 2), contentType: "application/json" });
     perturb = false; for (const timer of timers) clearTimeout(timer);
     await stableContext.close(); await jitterContext.close();
+  }
+});
+
+test("V33/V34 restored multi-second buffers render and blackholed receivers recover automatically", async ({ page, context, browser }) => {
+  test.setTimeout(90000);
+  await authenticate(context);
+  const headers = { "X-jmmp-Client": "1" };
+  const upload = await page.request.post(fixture.url + "/api/sources/1/upload?path=recovery.flac",
+    { headers, data: await readFile(resolve("server/src/test/fixtures/continuity-one.flac")) });
+  expect(upload.ok()).toBe(true);
+  const metadata = (await upload.json()).data.track;
+  expect((await page.request.post(fixture.url + "/api/catalog/upload",
+    { headers, data: { sourceId: 1, tracks: [metadata] } })).ok()).toBe(true);
+  const tracks = (await (await page.request.get(fixture.url + "/api/catalog/tracks?source=1")).json()).data.tracks as Track[];
+  const song = tracks.find(track => track.sourceTrackId === metadata.sourceTrackId)!;
+  const settings = (await (await page.request.get(fixture.url + "/api/moq")).json()).data.settings;
+  expect((await page.request.put(fixture.url + "/api/moq", { headers, data: { ...settings, enabled: true, publicListening: true,
+    port: fixture.relayPort, publicUrl: `http://localhost:${fixture.relayPort}`, websocketUrl: fixture.publicUrl.replace("http:", "ws:") + "/moq" } })).ok()).toBe(true);
+  const clients = await Promise.all([false, true].map(async shared => {
+    const ctx = await browser.newContext({ serviceWorkers: "block" });
+    // A route-fulfilled isolated document has no local network address space in
+    // Chromium. Explicitly grant this fixture access to its localhost relay.
+    if (shared) await ctx.grantPermissions(["local-network-access"]);
+    await authenticate(ctx, true, true);
+    const initial = shared ? 1250 : 3200;
+    await ctx.addInitScript(({ key, initial }) => {
+      Object.defineProperty(window, "WebSocketStream", { value: undefined });
+      if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ version: 1, targetMs: initial, floorMs: initial }));
+    }, { key: LATENCY_STORAGE_KEY, initial });
+    if (shared) await ctx.route("**/public-listen", async route => {
+      const response = await route.fetch();
+      await route.fulfill({ response, headers: { ...response.headers(), "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Embedder-Policy": "require-corp" } });
+    });
+    let connections = 0;
+    const blocked = new Set<number>();
+    await ctx.routeWebSocket("**", socket => {
+      const id = ++connections, server = socket.connectToServer();
+      server.onMessage(message => { if (!blocked.has(id)) socket.send(message); });
+    });
+    const client = await ctx.newPage(), errors: string[] = [];
+    client.on("pageerror", error => errors.push(String(error)));
+    return { ctx, client, initial, shared, errors, blocked, connections: () => connections };
+  }));
+  try {
+    for (const { client } of clients) {
+      await client.goto(fixture.publicUrl + "/public-listen");
+      await client.getByRole("button", { name: "Listen", exact: true }).click();
+    }
+    // Existing 12s fixture plays for 48s via the ordinary shared server DSP.
+    // This keeps recovery away from EOF without adding another audio blob.
+    expect((await page.request.post(fixture.url + "/api/playback", { headers, data: { command: { type: "play", trackId: song.id,
+      params: { pitchSemi: 0, tempoPct: -50, speedPct: -50, gainDb: 0, volume: 1 } } } })).ok()).toBe(true);
+    for (const { client, initial, shared } of clients) {
+      await expect.poll(() => client.evaluate(() => (window as any).__moqAudio.rendered), { timeout: 12000 }).toBeGreaterThan(5);
+      expect(await client.evaluate(() => crossOriginIsolated)).toBe(shared);
+      expect(await client.evaluate(() => (window as any).__moqAudio.bufferPath)).toBe(shared ? "init-shared" : "init-post");
+      expect(await client.evaluate(key => JSON.parse(localStorage.getItem(key)!).targetMs, LATENCY_STORAGE_KEY)).toBe(initial);
+    }
+    // Refresh restores the learned budget, while audio still obeys the browser's
+    // explicit initial Listen gesture. No special per-tab audio source exists.
+    await Promise.all(clients.map(async ({ client, initial }) => {
+      await client.reload(); await client.getByRole("button", { name: "Listen", exact: true }).click();
+      await expect.poll(() => client.evaluate(() => (window as any).__moqAudio.rendered), { timeout: 12000 }).toBeGreaterThan(5);
+      expect(await client.evaluate(key => JSON.parse(localStorage.getItem(key)!).targetMs, LATENCY_STORAGE_KEY)).toBe(initial);
+    }));
+    for (const receiver of clients) receiver.blocked.add(receiver.connections());
+    const snapshots = await Promise.all(clients.map(({ client }) => client.evaluate(() => ({ ...(window as any).__moqAudio }))));
+    const connections = clients.map(receiver => receiver.connections());
+    for (const [index, receiver] of clients.entries()) {
+      await expect.poll(() => receiver.connections(), { timeout: 16000 }).toBeGreaterThan(connections[index]!);
+      const afterReconnect = await receiver.client.evaluate(() => (window as any).__moqAudio.rendered);
+      await expect.poll(() => receiver.client.evaluate(() => (window as any).__moqAudio.rendered), { timeout: 12000 }).toBeGreaterThan(afterReconnect + 10);
+      await expect(receiver.client.getByLabel("Adaptive playback buffer")).not.toContainText("Buffering");
+      await expect(receiver.client.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible();
+      const learned = await receiver.client.evaluate(key => JSON.parse(localStorage.getItem(key)!), LATENCY_STORAGE_KEY);
+      expect(learned.targetMs).toBeGreaterThan(receiver.initial);
+      expect(learned.targetMs).toBeLessThanOrEqual(Math.ceil(receiver.initial * 1.5 / 25) * 25);
+      expect(await receiver.client.evaluate(() => (window as any).__moqAudio.rendered)).toBeGreaterThan(snapshots[index]!.rendered + 10);
+      expect(receiver.errors).toEqual([]);
+    }
+  } finally {
+    await test.info().attach("recovery-clients", { body: JSON.stringify(await Promise.all(clients.map(async receiver => ({
+      shared: receiver.shared, connections: receiver.connections(), errors: receiver.errors,
+      audio: await receiver.client.evaluate(() => ({ ...(window as any).__moqAudio })).catch(() => null),
+    }))), null, 2), contentType: "application/json" });
+    await Promise.all(clients.map(receiver => receiver.ctx.close()));
   }
 });
