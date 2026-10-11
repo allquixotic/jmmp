@@ -22,6 +22,8 @@ describe("db / migrations", () => {
       .all()
       .map((r) => r.name);
     expect(tables).toContain("passkeys");
+    expect(tables).toContain("passkey_invitations");
+    expect(tables).toContain("passkey_invitation_challenges");
     expect(tables).toContain("bootstrap_tokens");
     expect(tables).toContain("sources");
     expect(tables).toContain("tracks");
@@ -74,7 +76,7 @@ describe("db / migrations", () => {
         []
       >("SELECT COUNT(*) AS count FROM _schema_migrations")
       .get();
-    expect(v?.count).toBe(8);
+    expect(v?.count).toBe(9);
     db.close();
   });
 });

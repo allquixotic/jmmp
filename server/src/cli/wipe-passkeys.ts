@@ -13,6 +13,7 @@ export async function runWipePasskeys(): Promise<void> {
     db.run("DELETE FROM bootstrap_tokens");
     db.run("DELETE FROM webauthn_challenges");
     db.run("DELETE FROM session_devices");
+    db.run("DELETE FROM passkey_invitations");
   });
   tx();
   const token = generateBootstrapToken();

@@ -5,6 +5,7 @@
 
 <template>
   <q-page>
+    <div class="q-pa-lg">
     <div class="row items-center q-mb-md">
       <div class="text-h5">Passkeys</div>
       <q-space />
@@ -51,6 +52,8 @@
         </q-item>
       </q-list>
     </q-card>
+    <PasskeyInvitations />
+    </div>
   </q-page>
 </template>
 
@@ -59,6 +62,7 @@ import { onMounted, ref } from "vue";
 import { api } from "src/api";
 import { describeApiError, registerNewPasskey } from "src/auth";
 import type { PasskeyListResponse, PasskeySummary } from "@jmmp/shared";
+import PasskeyInvitations from "src/components/PasskeyInvitations.vue";
 
 const passkeys = ref<PasskeySummary[]>([]);
 const adding = ref(false);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import "./auth.ts";
+import "./passkey-invitations.ts";
 import "./me.ts";
 import "./sources.ts";
 import "./qobuz.ts";

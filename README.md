@@ -57,6 +57,18 @@ bun run dev
 Open `http://localhost:9000`. On first launch the server prints a bootstrap
 token. Paste that token into the web app, register a passkey, and sign in.
 
+To invite another person, open **Settings → Passkeys → Create invitation**.
+Choose an optional label and expiry (24 hours by default), then copy the URL
+or share/download its QR code. The recipient opens it without signing in and
+chooses **Add my passkey**. Their new passkey grants full control of this jmmp
+instance and works with normal passkey sign-in afterward.
+
+Each invitation allows exactly one successful registration. Opening the link,
+scanning the QR code or cancelling the passkey prompt does not consume it.
+Unused invitations can be revoked from Passkeys, and expire automatically.
+Links are shown only when created; the server stores only their hashes.
+`wipe-passkeys` also invalidates all outstanding invitations.
+
 If all passkeys are lost, reset passkeys from the server workspace:
 
 ```bash

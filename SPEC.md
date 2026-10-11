@@ -26,6 +26,7 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - I.upstream: private publisher URL file, configurable protocol, independent listener WT/WS URLs; credentials never public.
 - I.spotify: authenticated Spotify source provisioning, metadata imports and server-owned decrypted audio via bundled librespot.
 - I.spotify-import: authenticated `/api/playlists/import/spotify` reuses a saved Spotify connection to create a native jmmp playlist from a URL.
+- I.passkey-invite: Settings → Passkeys creates/revokes expiring invitation URL/QR; public `/invite` registers one control passkey without prior sign-in.
 
 ## §V INVARIANTS
 V1: Disabled MoQ spawns no helper, worker, or source fetch.
@@ -48,6 +49,9 @@ V17: Playlist metadata imports use bounded background jobs and authenticated, se
 V18: Native helper selects process TLS crypto provider before either Spotify or MoQ initializes HTTPS; compiled provider ambiguity never reaches login.
 V19: Spotify import UI shows loaded track count; background failure yields actionable allowlisted error and safe server log; native diagnostics/credentials never enter response; polling has finite deadline.
 V20: Mixed Spotify playlists preserve order/duplicates of supported music; local-file/other unsupported references skipped with explicit count and persistent UI notice; never claimed server-playable.
+V21: Only full sessions mint/list/revoke invitations; 256-bit bearer secret stored only as hash, shared in URL fragment/local QR, never returned by list or cached; expiry and revocation survive restart.
+V22: Invitation grants only registration until verified passkey succeeds; challenge bound to invitation and expires in ten minutes; failed/cancelled registration and link previews preserve invitation; atomic consumption plus credential insert permits exactly one winner, including concurrent attempts.
+V23: Invited passkeys obey configured WebAuthn RP/origin/user verification; successful recipient can later sign in normally; wipe-passkeys invalidates invitations/challenges; public music listener exposes no invitation API.
 
 ## §T TASKS
 id|status|task|cites
@@ -64,6 +68,7 @@ T9|x|vendor librespot, upgrade direct crates and add Spotify source|V3,V8,V10,V1
 T10|x|publish generic features; deploy isolated public/control services and verify CDN playback|V6,V8,V9,V10,V11,V12,V13,I.public,I.upstream,I.spotify
 T11|x|default Spotify to built-in browser login; verify and deploy|V8,V10,V13,V14,V15,I.spotify,I.build
 T12|x|separate Spotify account connection and native playlist URL import; verify and deploy|V10,V13,V14,V15,V16,V17,I.spotify,I.spotify-import
+T13|x|single-use passkey invitation URL/QR, authenticated management, recipient enrollment; verify, push and deploy|V10,V11,V21,V22,V23,I.passkey-invite
 
 ## §B BUGS
 id|date|cause|fix

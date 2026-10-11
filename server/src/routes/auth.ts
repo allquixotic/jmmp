@@ -3,7 +3,6 @@
 
 import type { Database } from "bun:sqlite";
 import {
-  generateRegistrationOptions,
   verifyRegistrationResponse,
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
@@ -30,8 +29,8 @@ import {
 } from "../session.ts";
 import { clearCookie } from "../jwt.ts";
 import { log } from "../log.ts";
+import { insertRegisteredPasskey, passkeyRegistrationOptions } from "../passkey-registration.ts";
 
-const RP_USER_ID = "jmmp-user";
 let lastDebugBootstrapToken: string | null = null;
 
 interface PasskeyRow {
@@ -168,25 +167,7 @@ post("/api/auth/bootstrap-redeem", async (req: Req) => {
 get("/api/auth/passkey/register/options", async (req: Req) => {
   const session = await requireRegOrFullSession(req);
   if (session instanceof Response) return session;
-  const passkeys = listPasskeys(req.ctx.db);
-  const opts = await generateRegistrationOptions({
-    rpName: req.ctx.cfg.webauthn.rpName,
-    rpID: req.ctx.cfg.webauthn.rpId,
-    userID: new TextEncoder().encode(RP_USER_ID),
-    userName: "user",
-    userDisplayName: "jmmp user",
-    attestationType: "none",
-    authenticatorSelection: {
-      residentKey: "preferred",
-      userVerification: "preferred",
-    },
-    excludeCredentials: passkeys.map((p) => ({
-      id: bytesToBase64Url(p.credential_id),
-      transports: (p.transports
-        ? (JSON.parse(p.transports) as AuthenticatorTransport[])
-        : undefined),
-    })),
-  });
+  const opts = await passkeyRegistrationOptions(req.ctx);
   storeChallenge(req.ctx.db, opts.challenge, "registration");
   return ok(opts);
 });
@@ -217,27 +198,7 @@ post("/api/auth/passkey/register/verify", async (req: Req) => {
   if (!verification.verified || !verification.registrationInfo) {
     return fail("verification failed", 400, "verify");
   }
-  const info = verification.registrationInfo;
-  const credentialId = base64UrlToBytes(info.credential.id);
-  const publicKey = info.credential.publicKey;
-  const counter = info.credential.counter;
-  const aaguid = info.aaguid ? hexToBytes(info.aaguid.replaceAll("-", "")) : null;
-  const transports = body.response.response.transports
-    ? JSON.stringify(body.response.response.transports)
-    : null;
-
-  req.ctx.db.run(
-    `INSERT INTO passkeys (credential_id, public_key, counter, transports, nickname, aaguid)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      credentialId,
-      publicKey,
-      counter,
-      transports,
-      body.nickname ?? null,
-      aaguid,
-    ]
-  );
+  insertRegisteredPasskey(req.ctx.db, body.response, verification.registrationInfo, body.nickname ?? null);
 
   req.ctx.db.run(
     "DELETE FROM bootstrap_tokens WHERE consumed_at IS NOT NULL"
@@ -362,13 +323,4 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 
 function base64UrlToBytes(s: string): Uint8Array {
   return new Uint8Array(Buffer.from(s, "base64url"));
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2 !== 0) return new Uint8Array(0);
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
 }

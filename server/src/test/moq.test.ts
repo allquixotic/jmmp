@@ -87,7 +87,7 @@ test("V11/V12: public listener isolates all controller APIs and forwards subscri
       publicListening: true, tlsOffload: true, publicUrl: "https://radio.example.com",
       websocketUrl: "wss://radio.example.com/moq" });
     server = startPublicListener(app.ctx);
-    for (const path of ["/api/auth/status", "/api/auth/register/options", "/api/sources", "/api/catalog", "/api/moq", "/api/playback", "/api/stream/1", "/login", "/settings"]) {
+    for (const path of ["/api/auth/status", "/api/auth/register/options", "/api/auth/passkey/invitations", "/api/auth/passkey/invitation/options", "/api/auth/passkey/invitation/info", "/api/sources", "/api/catalog", "/api/moq", "/api/playback", "/api/stream/1", "/login", "/settings", "/invite"]) {
       expect((await request(path))!.status).toBe(404);
       expect((await request(path, "POST"))!.status).toBe(404);
     }

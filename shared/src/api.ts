@@ -141,6 +141,27 @@ export interface PasskeyListResponse {
   passkeys: PasskeySummary[];
 }
 
+export interface PasskeyInvitation {
+  id: number;
+  label: string | null;
+  createdAt: number;
+  expiresAt: number;
+  consumedAt: number | null;
+  revokedAt: number | null;
+}
+export interface PasskeyInvitationListResponse {
+  invitations: PasskeyInvitation[];
+}
+export interface CreatePasskeyInvitationResponse {
+  invitation: PasskeyInvitation;
+  /** Bearer secret in fragment; returned only at creation. */
+  url: string;
+}
+export interface PasskeyInvitationInfo {
+  label: string | null;
+  expiresAt: number;
+}
+
 export interface SettingsResponse {
   settings: UserSettings;
 }

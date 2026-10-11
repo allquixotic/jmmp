@@ -32,6 +32,17 @@ export async function registerNewPasskey(nickname: string | null): Promise<void>
   });
 }
 
+export async function registerInvitedPasskey(token: string, nickname: string | null): Promise<void> {
+  const options = await api.post<PublicKeyCredentialCreationOptionsJSON>("/api/auth/passkey/invitation/options", { token });
+  let response;
+  try { response = await startRegistration({ optionsJSON: options }); }
+  catch (err) {
+    if (err instanceof Error && err.name === "InvalidStateError") throw new Error("This authenticator is already registered. Use another passkey.");
+    throw err;
+  }
+  await api.post<{ verified: true }>("/api/auth/passkey/invitation/verify", { token, response, nickname });
+}
+
 export async function signInWithPasskey(): Promise<void> {
   const options = await api.get<PublicKeyCredentialRequestOptionsJSON>(
     "/api/auth/passkey/auth/options"
