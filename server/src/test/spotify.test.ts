@@ -12,8 +12,16 @@ import { mintSession } from "../session.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import type { SourceSecrets } from "@jmmp/shared";
 import "../routes/index.ts";
+import { spotifyRedirectUri } from "../routes/spotify.ts";
 
 const uri="spotify:track:5sWHDYs0csV6RS48xBl0tH";
+test("Spotify callbacks use the configured HTTPS origin behind TLS offload", () => {
+  const ctx = { cfg: { webauthn: { origin: "https://control.example.com" } } } as AppCtx;
+  const req = (url: string, origin?: string) => ({ ctx, params: {}, url: new URL(url), request: new Request(url, { headers: origin ? { origin } : {} }) });
+  expect(spotifyRedirectUri(req("http://control.example.com/api/sources/spotify/oauth/start", "https://control.example.com"))).toBe("https://control.example.com/api/sources/spotify/oauth/callback");
+  expect(() => spotifyRedirectUri(req("http://evil.example/api", "https://control.example.com"))).toThrow();
+  expect(() => spotifyRedirectUri(req("http://control.example.com/api", "https://evil.example"))).toThrow();
+});
 test("Spotify imports only canonical supported collections",()=>{
   expect(normalizeSpotifyUris([uri,"https://open.spotify.com/track/5sWHDYs0csV6RS48xBl0tH?si=test"])).toEqual([uri]);
   for(const values of [[],["https://evil.example/track/5sWHDYs0csV6RS48xBl0tH"],["spotify:episode:5sWHDYs0csV6RS48xBl0tH"],[42]])expect(()=>normalizeSpotifyUris(values)).toThrow();

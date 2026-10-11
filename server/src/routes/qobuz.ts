@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { fail, get, ok, post, readJson, type Req } from "../router.ts";
 import { encryptJson } from "../crypto.ts";
 import { requireFullSession } from "../session.ts";
+import { configuredRequestOrigin } from "../origins.ts";
 import {
   exchangeOAuthCode,
   harvestAppCreds,
@@ -46,7 +47,7 @@ post("/api/sources/qobuz/oauth/start", async (req: Req) => {
     cleanupPendingOAuth();
     const creds = await harvestAppCreds();
     const state = randomUUID();
-    const redirectUrl = `${req.url.origin}/api/sources/qobuz/oauth/callback/${state}`;
+    const redirectUrl = `${configuredRequestOrigin(req.request, req.ctx.cfg.webauthn.origin).origin}/api/sources/qobuz/oauth/callback/${state}`;
     pendingOAuth.set(state, {
       sourceName,
       creds,

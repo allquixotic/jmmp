@@ -6,6 +6,7 @@ import { requireFullSession } from "../session.ts";
 import { encryptJson } from "../crypto.ts";
 import { normalizeSpotifyUris, spotifyTokenRequest } from "../sources/spotify.ts";
 import { runScan } from "../scan/worker.ts";
+import { configuredRequestOrigin } from "../origins.ts";
 
 interface Pending {
   did: string; jti: string; created: number; clientId: string; redirectUri: string;
@@ -15,11 +16,11 @@ interface Pending {
 const pending = new Map<string, Pending>();
 function cleanup() { for (const [state, value] of pending) if (Date.now()-value.created > 600000) pending.delete(state); }
 export function spotifyRedirectUri(req: Req): string {
-  const configured = req.ctx.cfg.webauthn.origin;
-  const origins = typeof configured === "string" ? [configured] : configured;
-  if (!origins.includes(req.url.origin)) throw new Error("Spotify callback must use a configured jmmp origin");
-  if (req.url.protocol !== "https:" && !["127.0.0.1", "[::1]"].includes(req.url.hostname)) throw new Error("Spotify requires HTTPS or a loopback IP callback");
-  return `${req.url.origin}/api/sources/spotify/oauth/callback`;
+  // A reverse proxy may send HTTP to Bun; the configured public origin owns TLS.
+  // Match its host and the browser's Origin instead of trusting forwarded headers.
+  const origin = configuredRequestOrigin(req.request, req.ctx.cfg.webauthn.origin);
+  if (origin.protocol !== "https:" && !["127.0.0.1", "[::1]"].includes(origin.hostname)) throw new Error("Spotify requires HTTPS or a loopback IP callback");
+  return `${origin.origin}/api/sources/spotify/oauth/callback`;
 }
 post("/api/sources/spotify/oauth/start", async req => {
   const session = await requireFullSession(req); if (session instanceof Response) return session;

@@ -7,6 +7,14 @@ export function originList(origin: string | string[]): string[] {
   return Array.isArray(origin) ? [...origin] : [origin];
 }
 
+/** Select the configured public origin when a reverse proxy terminates HTTPS. */
+export function configuredRequestOrigin(request: Request, configured: string | string[]): URL {
+  const url = new URL(request.url), browserOrigin = request.headers.get("origin");
+  const origin = originList(configured).map(value => new URL(value)).find(value => value.host === url.host && (!browserOrigin || value.origin === browserOrigin));
+  if (!origin) throw new Error("Request must use a configured jmmp origin");
+  return origin;
+}
+
 export function withOrigin(origin: string | string[], next: string): string[] {
   const origins = originList(origin);
   return origins.includes(next) ? origins : [...origins, next];

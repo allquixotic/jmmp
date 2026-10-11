@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { originList, shouldBindLocalHttpCompanion, withOrigin } from "../origins.ts";
+import { configuredRequestOrigin, originList, shouldBindLocalHttpCompanion, withOrigin } from "../origins.ts";
 
 describe("origin helpers", () => {
+  test("OAuth callbacks preserve the configured public origin through TLS offload", () => {
+    const origin = configuredRequestOrigin(new Request("http://control.example.com/api", { headers: { origin: "https://control.example.com", "x-forwarded-host": "evil.example", "x-forwarded-proto": "http" } }), ["http://localhost:9000", "https://control.example.com"]);
+    expect(origin.origin).toBe("https://control.example.com");
+    expect(() => configuredRequestOrigin(new Request("http://evil.example/api", { headers: { "x-forwarded-host": "control.example.com" } }), "https://control.example.com")).toThrow();
+  });
   test("withOrigin preserves existing origins and appends once", () => {
     const origins = withOrigin(["http://localhost:9000"], "https://host.tailnet.ts.net:3000");
 
