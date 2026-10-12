@@ -71,7 +71,9 @@ test("V39 every role can observe; only admin can query configuration or manage p
         expect((await f.call(role, "GET", path)).status).toBe(200);
       }
       for (const [method, path, body] of [
-        ["GET", "/api/moq", undefined], ["PUT", "/api/moq", {}], ["POST", "/api/moq/test", {}],
+        // Invalid settings reach validation for admins without starting a relay
+        // or compiling the native helper on a fresh test machine.
+        ["GET", "/api/moq", undefined], ["PUT", "/api/moq", { bitrate: 0 }], ["POST", "/api/moq/test", { bitrate: 0 }],
         ["POST", "/api/moq/test/end", {}], ["GET", "/api/auth/passkeys", undefined],
         ["GET", "/api/auth/passkey/invitations", undefined], ["POST", "/api/auth/passkey/invitations", {}],
         ["GET", "/api/auth/passkey/register/options", undefined], ["POST", "/api/auth/passkey/register/verify", {}],
@@ -80,6 +82,7 @@ test("V39 every role can observe; only admin can query configuration or manage p
       ] as const) {
         const response = await f.call(role, method, path, body);
         if (role !== "admin") expect(response.status).toBe(403);
+        else if (method === "PUT" && path === "/api/moq" || method === "POST" && path === "/api/moq/test") expect(response.status).toBe(400);
         else expect(response.status).not.toBe(403);
       }
       const sources = await (await f.call(role, "GET", "/api/sources")).json();
