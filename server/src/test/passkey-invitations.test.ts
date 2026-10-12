@@ -1,6 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 import { expect, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,8 +10,9 @@ import { initDb } from "../db.ts";
 import { loadOrInitMachineKey, sha256 } from "../crypto.ts";
 import { mintTestSession as mintSession } from "./session-fixture.ts";
 import { dispatch, type AppCtx } from "../router.ts";
-import type { CreatePasskeyInvitationResponse } from "@jmmp/shared";
+import { PASSKEY_ROLES, type PasskeyRole, type CreatePasskeyInvitationResponse } from "@jmmp/shared";
 import "../routes/index.ts";
+import roleMigration from "../migrations/0011_invitation_roles.sql" with { type: "text" };
 
 const base = "/api/auth/passkey/invitations";
 const publicBase = "/api/auth/passkey/invitation";
@@ -24,8 +26,8 @@ async function fixture() {
   const call = (path: string, body?: unknown, cookie = "", method = body ? "POST" : "GET", origin = "https://control.example.com") => dispatch(new Request(origin + path, {
     method, headers: { cookie, "X-jmmp-Client": "1", origin }, body: body ? JSON.stringify(body) : undefined,
   }), ctx);
-  async function invite() {
-    const response = await call(base, { label: "Friend", expiresInSeconds: 86400 }, owner.cookie);
+  async function invite(role?: PasskeyRole) {
+    const response = await call(base, { label: "Friend", expiresInSeconds: 86400, ...(role === undefined ? {} : { role }) }, owner.cookie);
     expect(response.status).toBe(201);
     const { data } = await response.json() as { data: CreatePasskeyInvitationResponse };
     const url = new URL(data.url);
@@ -93,12 +95,13 @@ test("V22 concurrent successful registrations consume an invitation exactly once
     await Bun.sleep(10); return successfulVerification(Buffer.from(`credential-${++count}`).toString("base64url"));
   });
   try {
-    const invitation = await f.invite(), a = await f.options(invitation.token), b = await f.options(invitation.token);
-    const responses = await Promise.all([a, b].map(options => f.call(publicBase + "/verify", { token: invitation.token, response: f.attestation(options.challenge), nickname: "Friend's passkey" })));
+    const invitation = await f.invite("viewer"), a = await f.options(invitation.token), b = await f.options(invitation.token);
+    const responses = await Promise.all([a, b].map(options => f.call(publicBase + "/verify", { token: invitation.token, response: f.attestation(options.challenge), nickname: "Friend's passkey", role: "admin" })));
     expect(responses.map(r => r.status).sort()).toEqual([200, 410]);
     const cookie = responses.find(r => r.status === 200)!.headers.get("set-cookie")!;
     expect(cookie).toContain("HttpOnly"); expect(cookie).toContain("Secure");
-    expect((await f.call("/api/auth/passkeys", undefined, cookie)).status).toBe(200);
+    expect((await f.call("/api/auth/passkeys", undefined, cookie)).status).toBe(403);
+    expect((await (await f.call("/api/me", undefined, cookie)).json()).data.role).toBe("viewer");
     expect(f.db.query("SELECT nickname FROM passkeys WHERE nickname IS NOT '__test__'").all()).toEqual([{ nickname: "Friend's passkey" }]);
     expect((await f.call(publicBase + "/info", { token: invitation.token })).status).toBe(410);
     expect((await f.call(publicBase + "/options", { token: invitation.token })).status).toBe(410);
@@ -196,4 +199,52 @@ test("V23 wipe-passkeys invalidates outstanding invitations and their challenges
     expect(f.db.query("SELECT 1 FROM session_devices").get()).toBeNull();
     expect((await f.call(publicBase + "/info", { token: invitation.token })).status).toBe(410);
   } finally { f.close(); }
+});
+
+test("V41 invitations default to admin and reject invalid roles without creating links", async () => {
+  const f = await fixture();
+  try {
+    for (const role of ["root", "DJ", "Viewer", "", null, 42, {}, []])
+      expect((await f.call(base, { role }, f.owner.cookie)).status).toBe(400);
+    expect(f.db.query("SELECT 1 FROM passkey_invitations").get()).toBeNull();
+    const invitation = await f.invite();
+    expect(invitation.invitation.role).toBe("admin");
+    expect(f.db.query("SELECT role FROM passkey_invitations WHERE id=?").get(invitation.invitation.id)).toEqual({ role: "admin" });
+  } finally { f.close(); }
+});
+
+test("V41 role migration preserves legacy admin invitations and constrains future roles", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec("CREATE TABLE passkey_invitations(id INTEGER PRIMARY KEY); INSERT INTO passkey_invitations VALUES(1)");
+    db.exec(roleMigration);
+    expect(db.query("SELECT role FROM passkey_invitations WHERE id=1").get()).toEqual({ role: "admin" });
+    expect(() => db.run("INSERT INTO passkey_invitations(id,role) VALUES(2,'root')")).toThrow();
+    expect(() => db.run("INSERT INTO passkey_invitations(id,role) VALUES(2,NULL)")).toThrow();
+  } finally { db.close(); }
+});
+
+test("V41 each invited role applies to the first session and recipient payload cannot elevate it", async () => {
+  const f = await fixture();
+  const verify = spyOn(webauthn, "verifyRegistrationResponse");
+  try {
+    for (const role of PASSKEY_ROLES) {
+      const invitation = await f.invite(role);
+      expect(invitation.invitation.role).toBe(role);
+      const preview = (await (await f.call(publicBase + "/info", { token: invitation.token, role: "admin" })).json()).data;
+      expect(preview.role).toBe(role);
+      const options = await f.options(invitation.token);
+      verify.mockResolvedValue(successfulVerification(Buffer.from("invited-" + role).toString("base64url")));
+      const result = await f.call(publicBase + "/verify", { token: invitation.token, response: f.attestation(options.challenge), role: "admin" });
+      expect(result.status).toBe(200);
+      const cookie = result.headers.get("set-cookie")!;
+      const me = (await (await f.call("/api/me", undefined, cookie)).json()).data;
+      expect(me.role).toBe(role); expect(me.isPlayer).toBe(false);
+      expect(f.db.query("SELECT role FROM passkeys WHERE id=?").get(me.passkeyId)).toEqual({ role });
+      expect((await f.call("/api/auth/passkeys", undefined, cookie)).status).toBe(role === "admin" ? 200 : 403);
+      expect((await f.call(publicBase + "/info", { token: invitation.token })).status).toBe(410);
+    }
+    const list = (await (await f.call(base, undefined, f.owner.cookie)).json()).data;
+    expect(list.invitations.map((i: { role: PasskeyRole }) => i.role).sort()).toEqual([...PASSKEY_ROLES].sort());
+  } finally { verify.mockRestore(); f.close(); }
 });

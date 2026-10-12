@@ -12,7 +12,7 @@
       </template>
       <template v-else>
         <template v-if="invitation">
-          <p>You have been invited to control this jmmp instance. Add a passkey on your device to accept.</p>
+          <p>This invitation grants <strong>{{ passkeyRoleLabel(invitation.role) }} access</strong> to jmmp. Add a passkey on your device to accept.</p>
           <p v-if="invitation.label">Invitation: {{ invitation.label }}</p>
           <p class="text-caption">Expires {{ new Date(invitation.expiresAt * 1000).toLocaleString() }}.</p>
           <q-input v-model="nickname" label="Passkey nickname (optional)" maxlength="120" :disable="working" class="q-mb-md" />
@@ -28,7 +28,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import type { PasskeyInvitationInfo } from "@jmmp/shared";
+import { passkeyRoleLabel, type PasskeyInvitationInfo } from "@jmmp/shared";
 import { api, ApiError } from "src/api";
 import { describeApiError, isWebAuthnSupported, registerInvitedPasskey } from "src/auth";
 import { useSessionStore } from "src/stores/session";

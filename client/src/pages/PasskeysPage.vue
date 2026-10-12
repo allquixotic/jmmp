@@ -69,11 +69,11 @@ import { describeApiError, registerNewPasskey } from "src/auth";
 import type { PasskeyListResponse, PasskeySummary } from "@jmmp/shared";
 import PasskeyInvitations from "src/components/PasskeyInvitations.vue";
 
-import { PASSKEY_ROLES, isPasskeyRole } from "@jmmp/shared";
+import { PASSKEY_ROLES, isPasskeyRole, passkeyRoleLabel } from "@jmmp/shared";
 import { useSessionStore } from "src/stores/session";
 import { useRouter } from "vue-router";
 const session = useSessionStore(), router = useRouter();
-const roles = PASSKEY_ROLES.map(value => ({ value, label: value === "dj" ? "DJ" : value[0]!.toUpperCase() + value.slice(1) }));
+const roles = PASSKEY_ROLES.map(value => ({ value, label: passkeyRoleLabel(value) }));
 function isLastAdmin(p: PasskeySummary): boolean { return p.role === "admin" && passkeys.value.filter(k => k.role === "admin").length === 1; }
 async function onRename(p: PasskeySummary): Promise<void> {
   const nickname = window.prompt("Passkey label:", p.nickname ?? "");

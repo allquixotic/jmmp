@@ -28,7 +28,7 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - I.upstream: private publisher URL file, configurable protocol, independent listener WT/WS URLs; credentials never public.
 - I.spotify: authenticated Spotify source provisioning, metadata imports and server-owned decrypted audio via bundled librespot.
 - I.spotify-import: authenticated `/api/playlists/import/spotify` reuses a saved Spotify connection to create a native jmmp playlist from a URL.
-- I.passkey-invite: Settings → Passkeys creates/revokes expiring invitation URL/QR; public `/invite` registers one control passkey without prior sign-in.
+- I.passkey-invite: Settings → Passkeys creates/revokes expiring invitation URL/QR with a selected role; public `/invite` registers one passkey in that role without prior sign-in.
 
 ## §V INVARIANTS
 V1: Disabled MoQ spawns no helper, worker, or source fetch.
@@ -70,10 +70,11 @@ V34: Delay decreases require ten uninterrupted minutes of healthy rendering, the
 V35: Listener Resync clears saved delay, failed-budget floor, RTT and quiet evidence, cancels stale receiver work and reconnects at initial budget; owner playback and other listeners continue unchanged.
 V36: Structured service logs identify source/worker, server/helper and helper/upstream gaps, their duration and recovery; deliberate pause/seek/EOF excluded; stalled operations log before returning; native stdout continuously drained; upstream loss/stale-content counters distinct from confirmed receiver underruns; credentials never logged.
 
-V37: Full sessions bind the authenticating passkey; current database role controls each API request and queued playback command; deleted credentials revoke sessions; legacy unbound sessions require sign-in; existing/new credentials default admin; last admin cannot be removed/demoted.
+V37: Full sessions bind the authenticating passkey; current database role controls each API request and queued playback command; deleted credentials revoke sessions; legacy unbound sessions require sign-in; existing/new credentials default admin unless an invitation assigns another role; last admin cannot be removed/demoted.
 V38: Viewers observe without ownership/heartbeat/tab claims or server/shared playback writes; all roles receive MoQ, only DJs/admins receive source audio; player control requires enabled MoQ; read-write roles retain one controller; initial settings/UI hydration never claims ownership or sends shared controls.
 V39: MoQ settings, existing source config and passkey/invitation administration require admin; DJs add sources/uploads and CRUD playlists; source/file deletion remains admin; all other role capabilities enforced in API and UI; unclassified API defaults admin.
 V40: Safe playback discovery exposes enabled mode and player page only; sidebar Listen to stream opens configured public player or authenticated /listen in a new tab; no MoQ admin settings query by listeners; passkey labels persist server-side; local view preferences never write viewer playback state.
+V41: Admin invitation creation validates and persists viewer/player/dj/admin role, default admin for omitted role and legacy invitations; recipient UI displays assigned access; atomic consumption assigns the stored role to the credential and first session; recipient payload cannot elevate it; single-use/expiry/revocation preserved.
 
 ## §T TASKS
 id|status|task|cites
@@ -103,6 +104,7 @@ T21|x|persist learned delay, stabilize adaptive probes and automatically recover
 T22|x|listener Resync and pipeline dropout diagnostics; verify, push and deploy|V10,V12,V35,V36,I.public,I.helper,I.upstream
 
 T23|x|passkey roles/labels, concurrent observers and stream shortcut; verify|V10,V37,V38,V39,V40
+T24|x|select and persist invitation role; verify|V10,V21,V22,V23,V37,V41,I.passkey-invite
 
 ## §B BUGS
 id|date|cause|fix
@@ -168,3 +170,4 @@ B56|2026-10-11|Touch menu test reopens keyboard menu before focus trap releases 
 B57|2026-10-11|New controller routes pause/seek/volume to idle local backend until first track selection; parameters require an audio subscription|Route explicit controls by observed MoQ mode, claim ownership only for deliberate user actions, and send parameters without requiring audio subscription; cold-controller regression (V38)
 B58|2026-10-11|Long upload retained permissions from request start after a credential downgrade|Revalidate role/source immediately before synchronous permanent file/catalog commit; streaming-upload downgrade regression (V37,V39)
 B59|2026-10-11|Pitch panels apply default DSP on mount/hydration, claiming shared playback from a newly signed-in controller|Send DSP only from user input; initialize pitch/tempo/speed when deliberately selecting a track; cold-controller browser regression rejects unsolicited parameters (V38)
+B60|2026-10-11|Invitation browser fixture reads text content from a Quasar combobox input|Assert the input value; verify admin default and real viewer enrollment (V10,V41)

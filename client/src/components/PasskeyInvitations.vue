@@ -3,10 +3,11 @@
   <section class="q-mt-xl">
     <h2 class="text-h6">Invite another person</h2>
     <p>Share a single-use link or QR code so someone can add their own passkey without signing in first.
-      Their passkey gives full control of this jmmp instance.</p>
+      Choose the access their passkey will receive. Admin is the default.</p>
     <q-banner v-if="error" class="bg-red-1 text-red-10 q-mb-md" rounded dense>{{ error }}</q-banner>
     <div class="row q-col-gutter-md items-end">
       <q-input v-model="label" class="col-12 col-sm" label="Invitation label (optional)" maxlength="120" :disable="working" />
+      <q-select v-model="role" class="col-12 col-sm" label="Invitation role" :options="roles" emit-value map-options :disable="working" />
       <q-select v-model="lifetime" class="col-12 col-sm" label="Invitation expires after" :options="lifetimes" emit-value map-options :disable="working" />
       <div class="col-12 col-sm-auto">
         <q-btn color="primary" icon="person_add" label="Create invitation" :loading="working" @click="create" />
@@ -16,7 +17,7 @@
       <q-item v-for="invitation in invitations" :key="invitation.id">
         <q-item-section>
           <q-item-label>{{ invitation.label || `Invitation #${invitation.id}` }}</q-item-label>
-          <q-item-label caption>{{ status(invitation) }} · expires {{ formatTs(invitation.expiresAt) }}</q-item-label>
+          <q-item-label caption>{{ passkeyRoleLabel(invitation.role) }} · {{ status(invitation) }} · expires {{ formatTs(invitation.expiresAt) }}</q-item-label>
         </q-item-section>
         <q-item-section side>
           <q-btn v-if="status(invitation) === 'Available'" flat color="negative" label="Revoke"
@@ -30,7 +31,7 @@
       <q-card class="invitation-share">
         <q-card-section>
           <div class="text-h6">Passkey invitation</div>
-          <p class="q-mt-sm">Anyone with this link can add one passkey and gain full control of jmmp.
+          <p class="q-mt-sm">Anyone with this link can add one passkey with {{ created ? passkeyRoleLabel(created.invitation.role) : '' }} access.
             The invitation stops working after successful registration.</p>
           <p v-if="created">Expires {{ formatTs(created.invitation.expiresAt) }}.</p>
           <q-input v-if="created" :model-value="created.url" label="Invitation link" readonly autogrow type="textarea" />
@@ -52,12 +53,14 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { copyToClipboard, useQuasar } from "quasar";
 import QRCode from "qrcode";
-import type { CreatePasskeyInvitationResponse, PasskeyInvitation, PasskeyInvitationListResponse } from "@jmmp/shared";
+import { PASSKEY_ROLES, passkeyRoleLabel, type PasskeyRole, type CreatePasskeyInvitationResponse, type PasskeyInvitation, type PasskeyInvitationListResponse } from "@jmmp/shared";
 import { api } from "src/api";
 import { describeApiError } from "src/auth";
 
 const $q = useQuasar();
 const invitations = ref<PasskeyInvitation[]>([]), label = ref(""), lifetime = ref(86400);
+const role = ref<PasskeyRole>("admin");
+const roles = PASSKEY_ROLES.map(value => ({ value, label: passkeyRoleLabel(value) }));
 const error = ref<string | null>(null), loading = ref(true), working = ref(false);
 const created = ref<CreatePasskeyInvitationResponse | null>(null), showShare = ref(false), qr = ref(""), qrError = ref(false);
 const now = ref(Date.now());
@@ -75,7 +78,7 @@ async function create() {
   if (working.value) return;
   working.value = true; error.value = null; qr.value = ""; qrError.value = false;
   try {
-    created.value = await api.post<CreatePasskeyInvitationResponse>("/api/auth/passkey/invitations", { label: label.value.trim() || null, expiresInSeconds: lifetime.value });
+    created.value = await api.post<CreatePasskeyInvitationResponse>("/api/auth/passkey/invitations", { label: label.value.trim() || null, role: role.value, expiresInSeconds: lifetime.value });
     showShare.value = true;
     try { qr.value = await QRCode.toDataURL(created.value.url, { errorCorrectionLevel: "M", margin: 4, width: 300 }); }
     catch { qrError.value = true; }

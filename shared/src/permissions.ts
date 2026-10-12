@@ -6,6 +6,9 @@ export type Permission = "observe" | "control" | "localPlayback" | "playlistWrit
 export function isPasskeyRole(value: unknown): value is PasskeyRole {
   return typeof value === "string" && PASSKEY_ROLES.some(role => role === value);
 }
+export function passkeyRoleLabel(role: PasskeyRole): string {
+  return role === "dj" ? "DJ" : role[0]!.toUpperCase() + role.slice(1);
+}
 export function can(role: PasskeyRole | null | undefined, permission: Permission): boolean {
   if (!isPasskeyRole(role)) return false;
   if (permission === "observe") return true;

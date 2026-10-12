@@ -1,7 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 import { verifyRegistrationResponse, type RegistrationResponseJSON } from "@simplewebauthn/server";
-import type { PasskeyInvitation } from "@jmmp/shared";
+import { isPasskeyRole, type PasskeyRole, type PasskeyInvitation } from "@jmmp/shared";
 import { del, fail, get, ok, post, type Req } from "../router.ts";
 import { sha256 } from "../crypto.ts";
 import { mintSession, requireAdminSession } from "../session.ts";
@@ -44,12 +44,13 @@ async function bodyOf(req: Req): Promise<Record<string, unknown> | Response> {
 }
 
 interface InvitationRow {
+  role: PasskeyRole;
   id: number; label: string | null; created_at: number; expires_at: number;
   consumed_at: number | null; revoked_at: number | null;
 }
-const columns = "id,label,created_at,expires_at,consumed_at,revoked_at";
+const columns = "id,label,role,created_at,expires_at,consumed_at,revoked_at";
 function invitationOf(row: InvitationRow): PasskeyInvitation {
-  return { id: row.id, label: row.label, createdAt: row.created_at, expiresAt: row.expires_at, consumedAt: row.consumed_at, revokedAt: row.revoked_at };
+  return { id: row.id, label: row.label, role: row.role, createdAt: row.created_at, expiresAt: row.expires_at, consumedAt: row.consumed_at, revokedAt: row.revoked_at };
 }
 async function activeInvitation(req: Req, token: unknown): Promise<InvitationRow | null> {
   if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
@@ -61,6 +62,8 @@ post(management, async req => {
   const session = await requireAdminSession(req); if (session instanceof Response) return session;
   if (!allowedOrigin(req)) return error("Use a configured jmmp origin", 403);
   const body = await bodyOf(req); if (body instanceof Response) return body;
+  const role = body.role === undefined ? "admin" : body.role;
+  if (!isPasskeyRole(role)) return error("Invalid invitation role", 400);
   const expiresInSeconds = body.expiresInSeconds ?? 86400;
   if (typeof expiresInSeconds !== "number" || !Number.isSafeInteger(expiresInSeconds) || expiresInSeconds < 300 || expiresInSeconds > 604800)
     return error("Invitation lifetime must be between five minutes and seven days", 400);
@@ -71,7 +74,7 @@ post(management, async req => {
   const invitation = req.ctx.db.transaction(() => {
     const count = req.ctx.db.query<{ n: number }, []>("SELECT count(*) n FROM passkey_invitations WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at>unixepoch()").get()!.n;
     if (count >= 20) return null;
-    const result = req.ctx.db.run("INSERT INTO passkey_invitations(token_hash,label,created_by,expires_at) VALUES (?,?,?,unixepoch()+?)", [hash, label, session.did, expiresInSeconds]);
+    const result = req.ctx.db.run("INSERT INTO passkey_invitations(token_hash,label,role,created_by,expires_at) VALUES (?,?,?,?,unixepoch()+?)", [hash, label, role, session.did, expiresInSeconds]);
     return req.ctx.db.query<InvitationRow, [number]>(`SELECT ${columns} FROM passkey_invitations WHERE id=?`).get(Number(result.lastInsertRowid))!;
   })();
   if (!invitation) return error("Revoke an existing invitation before creating more", 429);
@@ -104,7 +107,7 @@ post(enrollment + "/info", async req => {
   if (!allowedOrigin(req)) return error("Use a configured jmmp origin", 403);
   const body = await bodyOf(req); if (body instanceof Response) return body;
   const invitation = await activeInvitation(req, body.token);
-  return invitation ? ok({ label: invitation.label, expiresAt: invitation.expires_at }, { headers: noStore }) : invalid();
+  return invitation ? ok({ label: invitation.label, role: invitation.role, expiresAt: invitation.expires_at }, { headers: noStore }) : invalid();
 });
 
 post(enrollment + "/options", async req => {
@@ -150,10 +153,10 @@ post(enrollment + "/verify", async req => {
   let passkeyId: number;
   try {
     passkeyId = req.ctx.db.transaction(() => {
-      const used = req.ctx.db.run("UPDATE passkey_invitations SET consumed_at=unixepoch() WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>unixepoch()", [invitation.id]);
-      if (!used.changes) throw new InvitationUnavailable();
+      const used = req.ctx.db.query<{ role: PasskeyRole }, [number]>("UPDATE passkey_invitations SET consumed_at=unixepoch() WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>unixepoch() RETURNING role").get(invitation.id);
+      if (!used || !isPasskeyRole(used.role)) throw new InvitationUnavailable();
       if (req.ctx.db.query("SELECT id FROM passkeys WHERE credential_id=?").get(Buffer.from(info.credential.id, "base64url"))) throw new CredentialExists();
-      const id = insertRegisteredPasskey(req.ctx.db, response, info, nickname);
+      const id = insertRegisteredPasskey(req.ctx.db, response, info, nickname, used.role);
       req.ctx.db.run("DELETE FROM passkey_invitation_challenges WHERE invitation_id=?", [invitation.id]);
       return id;
     })();

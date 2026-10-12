@@ -59,11 +59,12 @@ Open `http://localhost:9000`. On first launch the server prints a bootstrap
 token. Paste that token into the web app, register a passkey, and sign in.
 
 To invite another person, open **Settings → Passkeys → Create invitation**.
-Choose an optional label and expiry (24 hours by default), then copy the URL
-or share/download its QR code. The recipient opens it without signing in and
-chooses **Add my passkey**. Their new passkey grants full control of this jmmp
-instance by default and works with normal passkey sign-in afterward. Admins can
-rename credentials and change their roles on the Passkeys page.
+Choose a role (admin by default), optional label and expiry (24 hours by default),
+then copy the URL or share/download its QR code. The recipient opens it without
+signing in and chooses **Add my passkey**. Their new passkey receives the selected
+role immediately and works with normal passkey sign-in afterward. Select
+**Viewer** to share read-only access without an intervening admin session. Admins
+can rename credentials and change their roles on the Passkeys page.
 
 Each invitation allows exactly one successful registration. Opening the link,
 scanning the QR code or cancelling the passkey prompt does not consume it.
@@ -74,8 +75,9 @@ Links are shown only when created; the server stores only their hashes.
 ## Access roles
 
 Each session uses the role of the passkey that authenticated it. Existing and
-new passkeys default to **admin**. Role changes apply to existing sessions;
-deleting a passkey revokes its sessions. At least one admin must remain.
+new passkeys default to **admin**, except when an invitation assigns another role.
+Existing invitation links retain admin access. Role changes apply to existing
+sessions; deleting a passkey revokes its sessions. At least one admin must remain.
 
 | Role | Access |
 | --- | --- |

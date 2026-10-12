@@ -14,6 +14,7 @@ import migration0007 from "./migrations/0007_local_files.sql" with { type: "text
 import migration0008 from "./migrations/0008_spotify.sql" with { type: "text" };
 import migration0009 from "./migrations/0009_passkey_invitations.sql" with { type: "text" };
 import migration0010 from "./migrations/0010_passkey_roles.sql" with { type: "text" };
+import migration0011 from "./migrations/0011_invitation_roles.sql" with { type: "text" };
 
 interface MigrationFile {
   version: number;
@@ -49,6 +50,7 @@ const MIGRATIONS: MigrationFile[] = [
   { version: 8, name: "0008_spotify.sql", sql: migration0008 as unknown as string, foreignKeysOff: true },
   { version: 9, name: "0009_passkey_invitations.sql", sql: migration0009 as unknown as string },
   { version: 10, name: "0010_passkey_roles.sql", sql: migration0010 as unknown as string },
+  { version: 11, name: "0011_invitation_roles.sql", sql: migration0011 as unknown as string },
 ];
 
 export function initDb(dataDir: string): Database {

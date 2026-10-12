@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { generateRegistrationOptions, type AuthenticatorTransport, type RegistrationResponseJSON, type verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { AppCtx } from "./router.ts";
+import type { PasskeyRole } from "@jmmp/shared";
 
 type RegistrationInfo = NonNullable<Awaited<ReturnType<typeof verifyRegistrationResponse>>["registrationInfo"]>;
 
@@ -18,11 +19,12 @@ export function passkeyRegistrationOptions(ctx: AppCtx, userVerification: "prefe
 }
 
 /** Caller supplies transaction when registration consumes an invitation. */
-export function insertRegisteredPasskey(db: Database, response: RegistrationResponseJSON, info: RegistrationInfo, nickname: string | null): number {
-  const result = db.run(`INSERT INTO passkeys (credential_id, public_key, counter, transports, nickname, aaguid) VALUES (?, ?, ?, ?, ?, ?)`, [
+export function insertRegisteredPasskey(db: Database, response: RegistrationResponseJSON, info: RegistrationInfo, nickname: string | null, role: PasskeyRole = "admin"): number {
+  const result = db.run(`INSERT INTO passkeys (credential_id, public_key, counter, transports, nickname, aaguid, role) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
     Buffer.from(info.credential.id, "base64url"), info.credential.publicKey, info.credential.counter,
     response.response.transports ? JSON.stringify(response.response.transports) : null, nickname,
     info.aaguid ? Buffer.from(info.aaguid.replaceAll("-", ""), "hex") : null,
+    role,
   ]);
   return Number(result.lastInsertRowid);
 }

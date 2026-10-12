@@ -155,6 +155,7 @@ export interface PasskeyListResponse {
 }
 
 export interface PasskeyInvitation {
+  role: PasskeyRole;
   id: number;
   label: string | null;
   createdAt: number;
@@ -171,6 +172,7 @@ export interface CreatePasskeyInvitationResponse {
   url: string;
 }
 export interface PasskeyInvitationInfo {
+  role: PasskeyRole;
   label: string | null;
   expiresAt: number;
 }
