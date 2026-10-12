@@ -60,7 +60,7 @@ async function refreshTrack() {
   }
 }
 onMounted(() => { void refreshTrack(); polling = setInterval(() => void refreshTrack(), 1000); });
-const player = new MoqPlayer(publicListener);
+const player = new MoqPlayer(publicListener, true);
 player.addEventListener("error", e => { error.value = (e as CustomEvent).detail; });
 player.addEventListener("state", e => {
   const next = (e as CustomEvent<string>).detail;

@@ -30,6 +30,7 @@
               <div class="np-scrubber">
                 <span class="time-label mono">{{ formatTime(player.position) }}</span>
                 <q-slider
+                  :disable="!session.canControl"
                   :model-value="player.position"
                   :min="0"
                   :max="player.duration || 0"
@@ -43,7 +44,7 @@
                 <span class="time-label mono">{{ formatTime(player.duration) }}</span>
               </div>
 
-              <div class="np-controls">
+              <div v-if="session.canControl" class="np-controls">
                 <q-btn flat round dense size="md" icon="shuffle" />
                 <q-btn flat round dense size="md" icon="skip_previous" @click="prev" />
                 <q-btn unelevated round size="lg" class="np-play" :icon="player.state === 'playing' ? 'pause' : 'play_arrow'" @click="player.toggle" />
@@ -61,7 +62,7 @@
                 <q-btn flat round dense size="md" icon="repeat" />
               </div>
 
-              <div class="np-pitch-panel">
+              <div v-if="session.canControl" class="np-pitch-panel">
                 <div class="np-panel-title">Pitch · Tempo · Speed</div>
                 <PitchControl
                   v-model="hud.pitchSemi"
@@ -168,6 +169,8 @@ import PitchControl from "./PitchControl.vue";
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ "update:open": [v: boolean] }>();
 
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 const player = usePlayerStore();
 const queue = useQueueStore();
 const settings = useSettingsStore();
@@ -197,7 +200,6 @@ watch(
 
 onMounted(async () => {
   if (!settings.loaded) await settings.load().catch(() => {});
-  applyPitchToPlayer();
 });
 
 onBeforeUnmount(() => {

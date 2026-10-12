@@ -9,7 +9,7 @@ import { RootSchema } from "@moq/hang/catalog";
 import { DEFAULT_MOQ_SETTINGS, validateMoqSettings, validateDspParams } from "@jmmp/shared";
 import { initDb } from "../db.ts";
 import { loadOrInitMachineKey, encryptJson } from "../crypto.ts";
-import { mintSession } from "../session.ts";
+import { mintTestSession as mintSession } from "./session-fixture.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import { playbackController } from "../audio/controller.ts";
 import { redactMoqDiagnostics } from "../audio/helper.ts";
@@ -31,7 +31,7 @@ async function setup() {
   const dataDir = mkdtempSync(join(tmpdir(), "jmmp-moq-test-"));
   const ctx = { cfg: { dataDir, jwtSecret: "test-secret", sessionTtlDays: 1, webauthn: { origin: "http://localhost" } }, db: initDb(dataDir), machineKey: await loadOrInitMachineKey(dataDir) } as AppCtx;
   const minted = await mintSession(ctx, "owner", "full");
-  const session = { did: "owner", scope: "full" as const, jti: minted.jti };
+  const session = { did: "owner", scope: "full" as const, jti: minted.jti, role: "admin" as const, passkeyId: minted.passkeyId! };
   const call = (path: string, method = "GET", body?: unknown) => dispatch(new Request(`http://localhost${path}`, {
     method, headers: { cookie: minted.cookie, "X-jmmp-Client": "1", ...(body instanceof Blob ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : body instanceof Blob ? body : JSON.stringify(body),
@@ -182,7 +182,13 @@ test("V2/V4/V6/V8/V9: two authenticated listeners share one server source reader
     const wsUrl = listener.url.replace("localhost", "127.0.0.1");
     const denied = new URL(wsUrl); denied.searchParams.set("jwt", "invalid");
     await expect(Net.Connection.connect({ url: denied, signal: AbortSignal.timeout(5000) })).rejects.toThrow();
-    listeners.push(await connect(wsUrl, listener.name), await connect(wsUrl, listener.name));
+    const viewer = await mintSession(app.ctx, "viewer", "full");
+    app.ctx.db.run("UPDATE passkeys SET role='viewer' WHERE id=?", [viewer.passkeyId!]);
+    const viewerResponse = await dispatch(new Request("http://localhost/api/moq/listener", { headers: { cookie: viewer.cookie } }), app.ctx);
+    expect(viewerResponse.status).toBe(200);
+    const viewerListener = (await viewerResponse.json()).data;
+    listeners.push(await connect(wsUrl, listener.name), await connect(viewerListener.url.replace("localhost", "127.0.0.1"), viewerListener.name));
+    expect((await dispatch(new Request("http://localhost/api/take-control", { method: "POST", headers: { cookie: viewer.cookie, "X-jmmp-Client": "1" } }), app.ctx)).status).toBe(403);
     expect(Object.values(listeners[0]!.json.audio.renditions).some((r: any) => r.codec === "opus")).toBe(true);
     expect((await app.call("/api/stream/1")).status).toBe(409);
     expect((await app.call("/api/playback", "POST", { command: { type: "play", trackId: 1 } })).status).toBe(409);

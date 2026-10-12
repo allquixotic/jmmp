@@ -4,7 +4,7 @@
 -->
 
 <template>
-  <q-page>
+  <q-page v-if="session.canAddSources">
     <PageHero title="Sources" subtitle="Server uploads, S3 buckets, Qobuz, and Spotify.">
       <template v-slot:actions>
         <q-btn-dropdown unelevated color="primary" icon="add" label="Add source">
@@ -46,7 +46,7 @@
         <div class="source-text">
           <div class="source-name">{{ s.name }}</div>
           <div class="source-meta">
-            {{ s.kind }} · cache: {{ s.cachePolicy }} ·
+            {{ s.kind }} <span v-if="session.isAdmin">· cache: {{ s.cachePolicy }}</span> ·
             <span v-if="s.lastScannedAt"> scanned {{ formatTs(s.lastScannedAt) }}</span>
             <span v-else>never scanned</span>
           </div>
@@ -55,7 +55,7 @@
           <q-btn flat dense icon="refresh" @click="rescan(s.id, s.kind)">
             <q-tooltip>{{ s.kind === "local" ? "Import more music" : "Rescan" }}</q-tooltip>
           </q-btn>
-          <q-btn flat dense icon="delete" color="negative" @click="remove(s.id)">
+          <q-btn v-if="session.isAdmin" flat dense icon="delete" color="negative" @click="remove(s.id)">
             <q-tooltip>Remove</q-tooltip>
           </q-btn>
         </div>
@@ -78,6 +78,8 @@ import AddQobuzDialog from "src/components/AddQobuzDialog.vue";
 import AddSpotifyDialog from "src/components/AddSpotifyDialog.vue";
 import PageHero from "src/components/PageHero.vue";
 
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 const sources = useSourcesStore();
 const error = ref<string | null>(null);
 const showLocal = ref(false);

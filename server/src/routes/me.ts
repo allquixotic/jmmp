@@ -9,6 +9,7 @@ import {
 } from "@jmmp/shared";
 import { fail, get, ok, post, type Req } from "../router.ts";
 import { requireFullSession } from "../session.ts";
+import { playbackController } from "../audio/controller.ts";
 
 get("/api/me", async (req: Req) => {
   const session = await requireFullSession(req);
@@ -33,12 +34,14 @@ get("/api/me", async (req: Req) => {
     .get(session.did);
 
   const settings = loadSettings(req);
+  const output = playbackController(req.ctx).output();
 
   const body: MeResponse = {
+    role: session.role!, passkeyId: session.passkeyId!, moqEnabled: output.enabled, streamUrl: output.listenUrl,
     deviceId: session.did,
-    isPlayer: row?.is_player === 1,
+    isPlayer: session.role !== "viewer" && row?.is_player === 1,
     settings,
-    playerConflict: otherPlayer
+    playerConflict: session.role !== "viewer" && otherPlayer
       ? { otherDeviceId: otherPlayer.id, lastHeartbeatAt: otherPlayer.last_heartbeat_at }
       : null,
   };

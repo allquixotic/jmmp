@@ -27,6 +27,7 @@ import {
 const OAUTH_TTL_MS = 10 * 60 * 1000;
 
 type PendingQobuzOAuth = {
+  deviceId: string;
   sourceName: string;
   creds: HarvestedAppCreds;
   createdAt: number;
@@ -49,7 +50,7 @@ post("/api/sources/qobuz/oauth/start", async (req: Req) => {
     const state = randomUUID();
     const redirectUrl = `${configuredRequestOrigin(req.request, req.ctx.cfg.webauthn.origin).origin}/api/sources/qobuz/oauth/callback/${state}`;
     pendingOAuth.set(state, {
-      sourceName,
+      deviceId: session.did, sourceName,
       creds,
       createdAt: Date.now(),
       status: "pending",
@@ -69,7 +70,7 @@ get("/api/sources/qobuz/oauth/status/:state", async (req: Req) => {
   if (session instanceof Response) return session;
   cleanupPendingOAuth();
   const pending = pendingOAuth.get(req.params.state!);
-  if (!pending) return fail("Qobuz sign-in expired", 404, "qobuz_oauth_expired");
+  if (!pending || pending.deviceId !== session.did) return fail("Qobuz sign-in expired", 404, "qobuz_oauth_expired");
   const body: QobuzOAuthStatusResponse =
     pending.status === "complete"
       ? { status: "complete", sourceId: pending.sourceId!, email: pending.email! }
@@ -91,7 +92,7 @@ get("/api/sources/qobuz/oauth/callback/:state", async (req: Req) => {
   cleanupPendingOAuth();
   const state = req.params.state!;
   const pending = pendingOAuth.get(state);
-  if (!pending) {
+  if (!pending || pending.deviceId !== session.did) {
     return oauthResultPage("error", "Qobuz sign-in expired. Return to jmmp and try again.", 400);
   }
   if (pending.status === "complete") {

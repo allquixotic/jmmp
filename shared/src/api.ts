@@ -15,6 +15,7 @@ import type {
 } from "./source.ts";
 import type { HistoryEntry, Playlist, PlaylistWithTracks, QueueEntry } from "./catalog.ts";
 import type { UserSettings } from "./settings.ts";
+import type { PasskeyRole } from "./permissions.ts";
 
 export interface AuthStatusResponse {
   hasPasskeys: boolean;
@@ -28,6 +29,10 @@ export interface BootstrapRedeemRequest {
 }
 
 export interface MeResponse {
+  role: PasskeyRole;
+  passkeyId: number;
+  moqEnabled: boolean;
+  streamUrl: string | null;
   deviceId: string;
   isPlayer: boolean;
   settings: UserSettings;
@@ -35,11 +40,17 @@ export interface MeResponse {
 }
 
 export interface PasskeySummary {
+  role: PasskeyRole;
   id: number;
   nickname: string | null;
   transports: string[];
   lastUsedAt: number | null;
   createdAt: number;
+}
+
+export interface PlaybackOutput {
+  enabled: boolean;
+  listenUrl: string | null;
 }
 
 export interface CreateSourceRequest {

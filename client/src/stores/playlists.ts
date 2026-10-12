@@ -4,6 +4,7 @@
 import { defineStore } from "pinia";
 import { api } from "src/api";
 import type { Playlist, PlaylistListResponse, PlaylistWithTracks, SpotifyPlaylistImportResult, SpotifyPlaylistImportStatus } from "@jmmp/shared";
+import { useSessionStore } from "./session";
 import { sortPlaylists } from "src/playlists/sort";
 
 interface State {
@@ -20,11 +21,13 @@ export const usePlaylistsStore = defineStore("playlists", {
       this.loaded = true;
     },
     async create(name: string): Promise<Playlist> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       const p = await api.post<Playlist>("/api/playlists", { name });
       this.playlists = sortPlaylists([...this.playlists, p]);
       return p;
     },
     async importSpotify(sourceId: number, url: string, onProgress?: (tracks: number) => void): Promise<SpotifyPlaylistImportResult> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       const signal = AbortSignal.timeout(6 * 60 * 1000);
       const { jobId } = await api.post<{ jobId: string }>("/api/playlists/import/spotify", { sourceId, url }, { signal });
       for (;;) {
@@ -41,26 +44,31 @@ export const usePlaylistsStore = defineStore("playlists", {
       return api.get<PlaylistWithTracks>(`/api/playlists/${id}`);
     },
     async setTracks(id: number, trackIds: number[]): Promise<void> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       await api.patch(`/api/playlists/${id}`, { trackIds });
       const p = this.playlists.find((x) => x.id === id);
       if (p) p.trackCount = trackIds.length;
     },
     async append(id: number, trackIds: number[]): Promise<void> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       await api.post(`/api/playlists/${id}/append`, { trackIds });
       const p = this.playlists.find((x) => x.id === id);
       if (p) p.trackCount += trackIds.length;
     },
     async remove(id: number): Promise<void> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       await api.del(`/api/playlists/${id}`);
       this.playlists = this.playlists.filter((p) => p.id !== id);
     },
     async rename(id: number, name: string): Promise<void> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       await api.patch(`/api/playlists/${id}`, { name });
       const p = this.playlists.find((x) => x.id === id);
       if (p) p.name = name;
       this.playlists = sortPlaylists(this.playlists);
     },
     async setPinned(id: number, pinned: boolean): Promise<void> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       const pinnedAt = pinned ? Math.floor(Date.now() / 1000) : null;
       await api.patch(`/api/playlists/${id}`, { pinnedAt });
       const p = this.playlists.find((x) => x.id === id);
@@ -68,6 +76,7 @@ export const usePlaylistsStore = defineStore("playlists", {
       this.playlists = sortPlaylists(this.playlists);
     },
     async setStorage(id: number, sourceId: number | null): Promise<void> {
+      if (!useSessionStore().canEditPlaylists) throw new Error("DJ or admin role required to edit playlists");
       await api.patch(`/api/playlists/${id}`, { sourceId });
       const fresh = await this.get(id);
       const i = this.playlists.findIndex((p) => p.id === id);

@@ -31,6 +31,8 @@ export default defineRouter(function ({ store }) {
     if (!session.hasFullSession) {
       return { name: "login", query: { next: to.fullPath } };
     }
+    if (to.name === "passkeys" && !session.isAdmin) return { name: "home" };
+    if (to.name === "sources" && !session.canAddSources) return { name: "home" };
     return true;
   });
 

@@ -18,10 +18,11 @@ export function passkeyRegistrationOptions(ctx: AppCtx, userVerification: "prefe
 }
 
 /** Caller supplies transaction when registration consumes an invitation. */
-export function insertRegisteredPasskey(db: Database, response: RegistrationResponseJSON, info: RegistrationInfo, nickname: string | null): void {
-  db.run(`INSERT INTO passkeys (credential_id, public_key, counter, transports, nickname, aaguid) VALUES (?, ?, ?, ?, ?, ?)`, [
+export function insertRegisteredPasskey(db: Database, response: RegistrationResponseJSON, info: RegistrationInfo, nickname: string | null): number {
+  const result = db.run(`INSERT INTO passkeys (credential_id, public_key, counter, transports, nickname, aaguid) VALUES (?, ?, ?, ?, ?, ?)`, [
     Buffer.from(info.credential.id, "base64url"), info.credential.publicKey, info.credential.counter,
     response.response.transports ? JSON.stringify(response.response.transports) : null, nickname,
     info.aaguid ? Buffer.from(info.aaguid.replaceAll("-", ""), "hex") : null,
   ]);
+  return Number(result.lastInsertRowid);
 }

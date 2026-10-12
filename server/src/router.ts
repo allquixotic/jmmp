@@ -3,6 +3,7 @@
 
 import type { AppConfig } from "./config.ts";
 import type { Database } from "bun:sqlite";
+import { authorizeRoute } from "./authorization.ts";
 
 export interface AppCtx {
   cfg: AppConfig;
@@ -20,6 +21,7 @@ export interface Req {
 export type Handler = (req: Req) => Promise<Response> | Response;
 
 interface Route {
+  path: string;
   method: string;
   pattern: URLPattern;
   handler: Handler;
@@ -29,7 +31,7 @@ const routes: Route[] = [];
 let fallbackHandler: Handler | null = null;
 
 export function on(method: string, path: string, handler: Handler): void {
-  routes.push({ method, pattern: new URLPattern({ pathname: path }), handler });
+  routes.push({ method, path, pattern: new URLPattern({ pathname: path }), handler });
 }
 
 export function setFallback(handler: Handler): void {
@@ -56,7 +58,9 @@ export async function dispatch(request: Request, ctx: AppCtx): Promise<Response>
       if (typeof v === "string") params[k] = v;
     }
     try {
-      return await r.handler({ request, ctx, params, url });
+      const req = { request, ctx, params, url };
+      const denied = await authorizeRoute(req, r.path);
+      return denied ?? await r.handler(req);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`route error ${request.method} ${url.pathname}:`, err);
@@ -86,7 +90,7 @@ export function requiresClientMutationHeader(request: Request): boolean {
 export function json(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers as object) },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...(init?.headers as object) },
   });
 }
 

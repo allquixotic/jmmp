@@ -15,6 +15,8 @@ jmmp serves shared-DSP server playback through optional integrated Opus/MoQ rela
 - Spotify default login uses librespot browser OAuth; no user-created developer app required.
 - Spotify account connection is independent of later playlist URL imports.
 
+- Passkey roles checked server-side; one writer controller, concurrent passive viewers.
+
 ## §I INTERFACES
 - I.output: authenticated `/api/moq` settings/status/test and listener credentials.
 - I.playback: authenticated owner-only `/api/playback` commands; revisioned status.
@@ -49,7 +51,7 @@ V17: Playlist metadata imports use bounded background jobs and authenticated, se
 V18: Native helper selects process TLS crypto provider before either Spotify or MoQ initializes HTTPS; compiled provider ambiguity never reaches login.
 V19: Spotify import UI shows loaded track count; background failure yields actionable allowlisted error and safe server log; native diagnostics/credentials never enter response; polling has finite deadline.
 V20: Mixed Spotify playlists preserve order/duplicates of supported music; local-file/other unsupported references skipped with explicit count and persistent UI notice; never claimed server-playable.
-V21: Only full sessions mint/list/revoke invitations; 256-bit bearer secret stored only as hash, shared in URL fragment/local QR, never returned by list or cached; expiry and revocation survive restart.
+V21: Only full admin sessions mint/list/revoke invitations; 256-bit bearer secret stored only as hash, shared in URL fragment/local QR, never returned by list or cached; expiry and revocation survive restart.
 V22: Invitation grants only registration until verified passkey succeeds; challenge bound to invitation and expires in ten minutes; failed/cancelled registration and link previews preserve invitation; atomic consumption plus credential insert permits exactly one winner, including concurrent attempts.
 V23: Invited passkeys obey configured WebAuthn RP/origin/user verification; successful recipient can later sign in normally; wipe-passkeys invalidates invitations/challenges; public music listener exposes no invitation API.
 V24: Packaged audio worker resolves its sibling bundled helper without a source checkout/toolchain; Spotify source bytes reach shared DSP from that worker.
@@ -67,6 +69,11 @@ V34: Delay decreases require ten uninterrupted minutes of healthy rendering, the
 
 V35: Listener Resync clears saved delay, failed-budget floor, RTT and quiet evidence, cancels stale receiver work and reconnects at initial budget; owner playback and other listeners continue unchanged.
 V36: Structured service logs identify source/worker, server/helper and helper/upstream gaps, their duration and recovery; deliberate pause/seek/EOF excluded; stalled operations log before returning; native stdout continuously drained; upstream loss/stale-content counters distinct from confirmed receiver underruns; credentials never logged.
+
+V37: Full sessions bind the authenticating passkey; current database role controls each API request and queued playback command; deleted credentials revoke sessions; legacy unbound sessions require sign-in; existing/new credentials default admin; last admin cannot be removed/demoted.
+V38: Viewers observe without ownership/heartbeat/tab claims or server/shared playback writes; all roles receive MoQ, only DJs/admins receive source audio; player control requires enabled MoQ; read-write roles retain one controller; initial settings/UI hydration never claims ownership or sends shared controls.
+V39: MoQ settings, existing source config and passkey/invitation administration require admin; DJs add sources/uploads and CRUD playlists; source/file deletion remains admin; all other role capabilities enforced in API and UI; unclassified API defaults admin.
+V40: Safe playback discovery exposes enabled mode and player page only; sidebar Listen to stream opens configured public player or authenticated /listen in a new tab; no MoQ admin settings query by listeners; passkey labels persist server-side; local view preferences never write viewer playback state.
 
 ## §T TASKS
 id|status|task|cites
@@ -94,6 +101,8 @@ T19|x|shared resizable/hideable table columns with persisted browser preferences
 T20|x|repair listener discontinuity recovery and add per-client adaptive playout; verify, push and deploy|V9,V10,V31,V32,I.public,I.playback
 T21|x|persist learned delay, stabilize adaptive probes and automatically recover stuck receivers; verify, push and deploy|V10,V33,V34,I.public
 T22|x|listener Resync and pipeline dropout diagnostics; verify, push and deploy|V10,V12,V35,V36,I.public,I.helper,I.upstream
+
+T23|x|passkey roles/labels, concurrent observers and stream shortcut; verify|V10,V37,V38,V39,V40
 
 ## §B BUGS
 id|date|cause|fix
@@ -150,3 +159,12 @@ B48|2026-10-11|Merged buffered ranges include decode pacing/reconnect backlog; a
 B49|2026-10-11|Jitter regression requires guessed delay despite continuous output; pre-reconnect render count can mask failed recovery|Assert growth plus seamless subsequent pauses; require fresh rendered output after replacement connection (V32,V34)
 B50|2026-10-11|Helper stdout stops draining at ready; worker and pipe waits have no live diagnostics; upstream only reports terminal failure|Continuous bounded diagnostic stream, stage-specific gap/recovery events and upstream transport/stale-content summaries (V36)
 B51|2026-10-11|Worker regression treats startup recovery as later streaming-gap recovery and exits before pipe test|Match steady-playback recovery phase and startup flag before asserting all stages (V36)
+
+B52|2026-10-11|Role migration changes schema count; authenticated player fixtures now reach real tab-lock network calls|Update migration expectation and bind/mock authenticated fixture sessions; keep strict checks (V10,V37)
+B53|2026-10-11|Playlist import fixtures omitted an authenticated role; old controllers could reclaim ownership while auto-advancing shared EOF|Bind fixtures to DJ; recheck ownership before automatic advance and never claim control implicitly; passive release stops local audio only (V10,V38)
+B54|2026-10-11|Browser fixture reused an excluded authenticator for a second passkey; credential creation previously switched the admin principal|Use a separate virtual authenticator; preserve existing admin binding; recheck admin scope before credential/invitation writes; verify real browser role editing (V37,V39)
+B55|2026-10-11|New label validator rejected optional null nickname; mode discovery no longer uses admin endpoint; observer cached mode could overwrite local playback after disable|Accept null nickname; update playback fixtures to safe discovery/full observer metadata; synchronize discovered mode immediately (V10,V37,V40)
+B56|2026-10-11|Touch menu test reopens keyboard menu before focus trap releases the prior popup|Wait for popup removal and focused header before keyboard reopen (V10,V30)
+B57|2026-10-11|New controller routes pause/seek/volume to idle local backend until first track selection; parameters require an audio subscription|Route explicit controls by observed MoQ mode, claim ownership only for deliberate user actions, and send parameters without requiring audio subscription; cold-controller regression (V38)
+B58|2026-10-11|Long upload retained permissions from request start after a credential downgrade|Revalidate role/source immediately before synchronous permanent file/catalog commit; streaming-upload downgrade regression (V37,V39)
+B59|2026-10-11|Pitch panels apply default DSP on mount/hydration, claiming shared playback from a newly signed-in controller|Send DSP only from user input; initialize pitch/tempo/speed when deliberately selecting a track; cold-controller browser regression rejects unsolicited parameters (V38)

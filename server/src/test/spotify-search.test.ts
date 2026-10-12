@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { SearchResponse } from "@jmmp/shared";
 import { initDb } from "../db.ts";
 import { encryptJson, loadOrInitMachineKey } from "../crypto.ts";
-import { mintSession } from "../session.ts";
+import { mintTestSession as mintSession } from "./session-fixture.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import * as runtime from "../audio/runtime.ts";
 import * as spotify from "../sources/spotify.ts";

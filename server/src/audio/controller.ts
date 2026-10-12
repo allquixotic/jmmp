@@ -5,6 +5,7 @@ import { DEFAULT_DSP_PARAMS, DEFAULT_MOQ_SETTINGS, validateDspParams, validateMo
   type MoqSettings, type PlaybackCommand, type PlaybackStatus, type MoqListener, type NowPlayingTrack } from "@jmmp/shared";
 import type { AppCtx } from "../router.ts";
 import type { ActiveSession } from "../session.ts";
+import { canControlPlayback, isPasskeyRole, type PlaybackOutput } from "@jmmp/shared";
 import { NativeOutput, redactMoqDiagnostics } from "./helper.ts";
 import { logPipeline, type PipelineStage } from "./diagnostics.ts";
 import { log } from "../log.ts";
@@ -32,6 +33,10 @@ export class PlaybackController {
     return this.ctx.db.query<NowPlayingTrack, [number]>("SELECT title,artist FROM tracks WHERE id=?").get(this.status.trackId);
   }
   snapshot() { return { settings: this.settings, running: this.running, error: this.error, playback: structuredClone(this.status) }; }
+  output(): PlaybackOutput {
+    const origin = this.settings.publicListening ? this.ctx.cfg.publicListener?.origin : undefined;
+    return { enabled: this.settings.enabled, listenUrl: this.settings.enabled ? (origin ? new URL("/public-listen", origin).href : "/listen") : null };
+  }
   async initialize() { if (this.settings.enabled) { try { await this.start(this.settings); } catch (error) { this.fail(String(error)); } } }
   private exclusive<T>(run: () => Promise<T>): Promise<T> {
     const result = this.serial.then(run); this.serial = result.catch(() => {}); return result;
@@ -128,7 +133,7 @@ export class PlaybackController {
         const { payload } = await jwtVerify(token, this.key, { audience: "jmmp-moq", algorithms: ["HS256"] });
         if (payload.public === true) { if (!this.settings.publicListening) throw new Error("Public listening disabled"); }
         else {
-          const device = this.ctx.db.query<{ jwt_jti: string }, [string]>("SELECT jwt_jti FROM session_devices WHERE id = ?").get(String(payload.did));
+          const device = this.ctx.db.query<{ jwt_jti: string }, [string]>("SELECT d.jwt_jti FROM session_devices d JOIN passkeys p ON p.id=d.passkey_id WHERE d.id = ?").get(String(payload.did));
           if (!device || device.jwt_jti !== payload.jti) throw new Error("Session revoked");
         }
         return Response.json({ root: "", subscribe: [this.helper!.name], publish: [], expires: payload.exp, revalidate: 30 });
@@ -160,7 +165,8 @@ export class PlaybackController {
   }
   command(command: PlaybackCommand, session: ActiveSession, revision?: number) {
     return this.exclusive(async () => {
-      const owner = this.ctx.db.query<{ is_player: number }, [string]>("SELECT is_player FROM session_devices WHERE id = ?").get(session.did);
+      const owner = this.ctx.db.query<{ is_player: number; role: unknown; jwt_jti: string }, [string]>("SELECT d.is_player,p.role,d.jwt_jti FROM session_devices d JOIN passkeys p ON p.id=d.passkey_id WHERE d.id = ?").get(session.did);
+      if (!owner || owner.jwt_jti !== session.jti || !isPasskeyRole(owner.role) || !canControlPlayback(owner.role, this.settings.enabled)) throw new Error("Your passkey cannot control playback");
       if (owner?.is_player !== 1) throw new Error("Only the current playback controller can change playback");
       if (!this.settings.enabled || !this.running) throw new Error(this.error ?? "MoQ output is disabled");
       if (revision !== undefined && revision !== this.status.revision) throw new Error("Playback changed; refresh before sending controls");

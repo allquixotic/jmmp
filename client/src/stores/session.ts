@@ -4,6 +4,7 @@
 import { defineStore } from "pinia";
 import { api, ApiError } from "src/api";
 import type { AuthStatusResponse, MeResponse } from "@jmmp/shared";
+import { can, canControlPlayback } from "@jmmp/shared";
 import { tabLock } from "src/tabs/tab-lock";
 
 interface State {
@@ -17,6 +18,8 @@ interface State {
 }
 
 let unsubscribeTabLock: (() => void) | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+let refreshing = false;
 
 export const useSessionStore = defineStore("session", {
   state: (): State => ({
@@ -28,6 +31,14 @@ export const useSessionStore = defineStore("session", {
     me: null,
     playerConflict: null,
   }),
+  getters: {
+    role: state => state.me?.role ?? null,
+    isAdmin: state => state.me?.role === "admin",
+    canEditPlaylists: state => can(state.me?.role, "playlistWrite"),
+    canAddSources: state => can(state.me?.role, "sourceAdd"),
+    canControl: state => canControlPlayback(state.me?.role, state.me?.moqEnabled ?? false),
+    isObserver: state => state.me?.role === "viewer",
+  },
   actions: {
     async refreshStatus(): Promise<void> {
       const data = await api.get<AuthStatusResponse>("/api/auth/status");
@@ -50,8 +61,17 @@ export const useSessionStore = defineStore("session", {
       } else {
         this.me = null;
       }
+      if (!this.hasFullSession || this.isObserver) this.stopPlayerLock();
+      else this.startPlayerLock();
+      if (this.hasFullSession && !refreshTimer) refreshTimer = setInterval(() => {
+        if (refreshing) return;
+        refreshing = true;
+        void this.refreshStatus().catch(() => {}).finally(() => { refreshing = false; });
+      }, 5000);
+      if (!this.hasFullSession) { clearInterval(refreshTimer); refreshTimer = undefined; }
     },
     startPlayerLock(): void {
+      if (!this.hasFullSession || this.isObserver) return;
       if (unsubscribeTabLock) return;
       unsubscribeTabLock = tabLock.onConflict((conflict) => {
         this.playerConflict = conflict;
@@ -65,7 +85,9 @@ export const useSessionStore = defineStore("session", {
       tabLock.stop();
     },
     async takePlayerControl(): Promise<void> {
+      if (!this.canControl) throw new Error("This passkey cannot control playback in the current mode");
       await tabLock.takeControl();
+      if (this.me) this.me.isPlayer = true;
       this.playerConflict = null;
     },
     async logout(): Promise<void> {
@@ -75,6 +97,7 @@ export const useSessionStore = defineStore("session", {
         /* ignore */
       }
       this.stopPlayerLock();
+      clearInterval(refreshTimer); refreshTimer = undefined;
       this.$reset();
       await this.refreshStatus();
     },

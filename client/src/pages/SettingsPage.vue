@@ -7,7 +7,7 @@
   <q-page>
     <PageHero title="Settings" />
 
-    <div class="settings-section">
+    <div v-if="session.canControl" class="settings-section">
       <h2 class="settings-section-title">Audio</h2>
       <div class="settings-list">
         <div class="settings-row">
@@ -27,12 +27,12 @@
       </div>
     </div>
 
-    <div class="settings-section">
+    <div v-if="session.isAdmin" class="settings-section">
       <h2 class="settings-section-title">MoQ output</h2>
       <MoqOutputSettings />
     </div>
 
-    <div class="settings-section">
+    <div v-if="session.isAdmin" class="settings-section">
       <h2 class="settings-section-title">Account</h2>
       <q-list bordered separator class="settings-card">
         <q-item clickable :to="{ name: 'passkeys' }">
@@ -55,6 +55,8 @@ import type { ReplayGainMode } from "@jmmp/shared";
 import MoqOutputSettings from "src/components/MoqOutputSettings.vue";
 import { usePlayerStore } from "src/stores/player";
 import PageHero from "src/components/PageHero.vue";
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 
 const settings = useSettingsStore();
 

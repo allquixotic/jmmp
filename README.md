@@ -12,6 +12,7 @@ The server stores state in sqlite and uses passkeys for authentication.
 ## Features
 
 - Passkey-only login with a one-time bootstrap token for first setup.
+- Per-passkey viewer, player, DJ and admin roles, with concurrent passive viewers.
 - Permanent server uploads, from files or a folder picker.
 - S3-compatible source support for AWS S3, MinIO, and similar services.
 - Qobuz source support through browser OAuth.
@@ -61,13 +62,37 @@ To invite another person, open **Settings → Passkeys → Create invitation**.
 Choose an optional label and expiry (24 hours by default), then copy the URL
 or share/download its QR code. The recipient opens it without signing in and
 chooses **Add my passkey**. Their new passkey grants full control of this jmmp
-instance and works with normal passkey sign-in afterward.
+instance by default and works with normal passkey sign-in afterward. Admins can
+rename credentials and change their roles on the Passkeys page.
 
 Each invitation allows exactly one successful registration. Opening the link,
 scanning the QR code or cancelling the passkey prompt does not consume it.
 Unused invitations can be revoked from Passkeys, and expire automatically.
 Links are shown only when created; the server stores only their hashes.
 `wipe-passkeys` also invalidates all outstanding invitations.
+
+## Access roles
+
+Each session uses the role of the passkey that authenticated it. Existing and
+new passkeys default to **admin**. Role changes apply to existing sessions;
+deleting a passkey revokes its sessions. At least one admin must remain.
+
+| Role | Access |
+| --- | --- |
+| Viewer | Browse, search, observe current playback and listen to MoQ; local display preferences only. |
+| Player | Viewer access plus playback, seeking, volume, SoundTouch and queue controls while MoQ is enabled. |
+| DJ | Player access plus playlist editing, source creation and file uploads; local cached playback when MoQ is disabled. |
+| Admin | All access, including passkeys/invitations, MoQ configuration, existing source settings and source/upload deletion. |
+
+Viewers never claim playback ownership and can connect concurrently. Read-write
+roles retain the single-controller limit. Source audio is available only to DJs
+and admins, and browser source reads stop while MoQ is enabled. All roles can
+use **Listen to stream** under Browse to open the configured public listener,
+or the authenticated `/listen` page, in a new tab.
+
+The role migration requires one fresh sign-in for older sessions, which did not
+record their authenticating passkey. Adding another passkey preserves the
+current administrator's session identity.
 
 If all passkeys are lost, reset passkeys from the server workspace:
 

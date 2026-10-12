@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./",
   testMatch: "*.pw.ts",
-  testIgnore: ["moq.pw.ts", "spotify.pw.ts", "invitations.pw.ts", "tables.pw.ts"],
+  testIgnore: ["moq.pw.ts", "spotify.pw.ts", "invitations.pw.ts", "tables.pw.ts", "rbac.pw.ts"],
   outputDir: "../test-results/standard",
   fullyParallel: false,
   retries: 0,

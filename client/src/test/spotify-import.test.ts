@@ -4,12 +4,13 @@ import { expect, spyOn, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import type { Playlist } from "@jmmp/shared";
 import { api } from "../api";
+import { authorizeTestSession } from "./session-fixture";
 import { usePlaylistsStore } from "../stores/playlists";
 
 const playlist: Playlist = { id: 1, name: "Imported", createdAt: 1, updatedAt: 1, pinnedAt: null, trackCount: 3, storage: { kind: "local", label: "jmmp server" } };
 
 test("V19/V20 Spotify import reports progress and preserves the skipped-item result", async () => {
-  setActivePinia(createPinia());
+  setActivePinia(createPinia()); authorizeTestSession("dj");
   const store = usePlaylistsStore(), progress: number[] = [];
   const start = spyOn(api, "post").mockResolvedValue({ jobId: "saved-account-import" });
   const status = spyOn(api, "get").mockResolvedValueOnce({ status: "pending", tracks: 14 })
@@ -24,7 +25,7 @@ test("V19/V20 Spotify import reports progress and preserves the skipped-item res
 });
 
 test("V19 stalled import polling shares a finite deadline with the start request", async () => {
-  setActivePinia(createPinia());
+  setActivePinia(createPinia()); authorizeTestSession("dj");
   const controller = new AbortController();
   const timeout = spyOn(AbortSignal, "timeout").mockImplementation(ms => {
     expect(ms).toBe(6 * 60 * 1000); return controller.signal;

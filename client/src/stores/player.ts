@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { defineStore } from "pinia";
-import type { Track } from "@jmmp/shared";
+import type { Track, PlaybackStatus, MeResponse } from "@jmmp/shared";
 import { AudioPlayer, cacheTrack, type PlayerState } from "src/audio/pipeline";
 import { UnavailableTrackError, playbackErrorText, type UnavailableTrackEvent } from "src/audio/playback-error";
 import { RoutingPlayer } from "src/audio/routing-player";
@@ -26,11 +26,15 @@ interface PlayerBackend extends EventTarget {
   stop(): void;
   seek(seconds: number): Promise<void>;
   setParams(p: Parameters<AudioPlayer["setParams"]>[0]): void;
+  controlParams?(p: Parameters<AudioPlayer["setParams"]>[0]): void;
   setVolume(volume: number): void;
   refreshOutput?(reconnect?: boolean): Promise<void>;
+  suspend?(): void;
 }
 
 let player: PlayerBackend | null = null;
+let observing: ReturnType<typeof setInterval> | undefined;
+let observeBusy = false;
 let createPlayerBackend = (): PlayerBackend => new RoutingPlayer();
 let playbackWakeLock: PlaybackWakeLockController | null | undefined;
 let createPlaybackWakeLockController = (): PlaybackWakeLockController | null =>
@@ -67,6 +71,38 @@ export const usePlayerStore = defineStore("player", {
       state.current ? !!state.pinned[String(state.current.id)] : false,
   },
   actions: {
+    async control(run: () => void | Promise<void>): Promise<void> {
+      const session = useSessionStore();
+      if (!session.canControl) return;
+      try {
+        if (!session.me?.isPlayer) await session.takePlayerControl();
+        if (session.canControl) await run();
+      } catch (error) { this.error = playbackErrorText(error); }
+    },
+    startObserving(): void {
+      if (observing) return;
+      const poll = async () => {
+        const session = useSessionStore();
+        if (!session.hasFullSession || !session.me?.moqEnabled || observeBusy) return;
+        observeBusy = true;
+        try {
+          const status = await api.get<PlaybackStatus & { currentTrack: Track | null }>("/api/playback");
+          if (!session.hasFullSession || !session.me?.moqEnabled) return;
+          this.moqEnabled = true; this.current = status.currentTrack;
+          this.position = status.position; this.duration = status.duration; this.volume = status.params.volume;
+          // Passive updates never advance the queue or send controls.
+          this.state = status.state === "buffering" ? "loading" : status.state;
+          this.error = status.error;
+        } catch { /* retry next observation */ }
+        finally { observeBusy = false; }
+      };
+      observing = setInterval(() => void poll(), 1000); void poll();
+    },
+    stopObserving(): void { clearInterval(observing); observing = undefined; },
+    releaseLocalAudio(): void {
+      this.attempt++; player?.suspend?.(); setPlaybackWakeLockActive(false);
+      if (!useSessionStore().me?.moqEnabled) { this.state = "idle"; this.current = null; this.position = 0; }
+    },
     ensure(): PlayerBackend {
       if (player) return player;
       player = createPlayerBackend();
@@ -91,7 +127,8 @@ export const usePlayerStore = defineStore("player", {
       });
       return player;
     },
-    async play(track: Track): Promise<void> {
+    async play(track: Track, claimControl = true): Promise<void> {
+      if (!useSessionStore().canControl) return;
       const attempt = ++this.attempt;
       this.current = track;
       this.position = 0;
@@ -100,7 +137,7 @@ export const usePlayerStore = defineStore("player", {
       this.state = "loading";
       try {
         const session = useSessionStore();
-        if (session.hasFullSession) await session.takePlayerControl();
+        if (claimControl && session.hasFullSession) await session.takePlayerControl();
         const settings = useSettingsStore();
         const gainDb = computeGainDb(
           track,
@@ -108,7 +145,8 @@ export const usePlayerStore = defineStore("player", {
           settings.settings.replayGainPreampDb
         );
         if (attempt !== this.attempt) return;
-        this.ensure().setParams({ gainDb });
+        const { pitchSemi, tempoPct, speedPct } = settings.settings.pitchHud;
+        this.ensure().setParams({ pitchSemi, tempoPct, speedPct, gainDb });
         const pinned = await this.loadPinState(track.id);
         const policy = await this.cachePolicyFor(track.sourceId);
         if (attempt !== this.attempt) return;
@@ -126,22 +164,26 @@ export const usePlayerStore = defineStore("player", {
       }
     },
     async skipUnavailable(error: string): Promise<void> {
+      if (!useSessionStore().canControl || !useSessionStore().me?.isPlayer) return;
       if (!this.current || this.skippedAttempt === this.attempt) return;
+      if (useSessionStore().hasFullSession && this.moqEnabled) {
+        const me = await api.get<MeResponse>("/api/me");
+        useSessionStore().me = me;
+        if (!me.isPlayer || !useSessionStore().canControl) return;
+      }
       this.skippedAttempt = this.attempt;
       this.diagnostics.unshift({ trackId: this.current.id, title: this.current.title ?? "Untitled",
         artist: this.current.artist ?? "", error, at: Date.now(), skipped: true });
       this.diagnostics.splice(50);
       const next = useQueueStore().next();
-      if (next) await this.play(next);
+      if (next) await this.play(next, false);
       else { this.state = "error"; this.error = error; setPlaybackWakeLockActive(false); }
     },
     pause(): void {
-      this.ensure().pause();
-      setPlaybackWakeLockActive(false);
+      void this.control(() => { this.ensure().pause(); setPlaybackWakeLockActive(false); });
     },
     resume(): void {
-      this.ensure().resume();
-      setPlaybackWakeLockActive(true);
+      void this.control(() => { this.ensure().resume(); setPlaybackWakeLockActive(true); });
     },
     async toggle(): Promise<void> {
       if (!this.current) return;
@@ -154,24 +196,21 @@ export const usePlayerStore = defineStore("player", {
       }
     },
     stop(): void {
-      this.attempt++;
-      this.ensure().stop();
-      setPlaybackWakeLockActive(false);
-      this.current = null;
-      this.position = 0;
+      void this.control(() => {
+        this.attempt++; this.ensure().stop(); setPlaybackWakeLockActive(false);
+        this.current = null; this.position = 0;
+      });
     },
     async seek(seconds: number): Promise<void> {
-      await this.ensure().seek(seconds);
-      this.position = seconds;
+      await this.control(async () => { await this.ensure().seek(seconds); this.position = seconds; });
     },
     setVolume(volume: number): void {
-      this.volume = Math.max(0, Math.min(1, volume));
-      this.ensure().setVolume(this.volume);
+      void this.control(() => { this.volume = Math.max(0, Math.min(1, volume)); this.ensure().setVolume(this.volume); });
     },
     updateReplayGain(): void {
       if (!this.current) return;
       const settings = useSettingsStore().settings;
-      this.ensure().setParams({ gainDb: computeGainDb(this.current, settings.replayGainMode, settings.replayGainPreampDb) });
+      this.setParams({ gainDb: computeGainDb(this.current, settings.replayGainMode, settings.replayGainPreampDb) });
     },
     async refreshOutput(): Promise<void> { await this.ensure().refreshOutput?.(true); },
     async togglePinCurrent(): Promise<void> {
@@ -201,9 +240,15 @@ export const usePlayerStore = defineStore("player", {
       speedPct?: number;
       gainDb?: number;
     }): void {
-      this.ensure().setParams(p);
+      void this.control(() => { const backend = this.ensure(); if (backend.controlParams) backend.controlParams(p); else backend.setParams(p); });
     },
     async onEnded(): Promise<void> {
+      if (!useSessionStore().canControl || !useSessionStore().me?.isPlayer) return;
+      if (useSessionStore().hasFullSession && this.moqEnabled) {
+        const me = await api.get<MeResponse>("/api/me");
+        useSessionStore().me = me;
+        if (!me.isPlayer || !useSessionStore().canControl) return;
+      }
       const finished = this.current;
       if (finished) {
         void api.post("/api/history", {
@@ -213,7 +258,7 @@ export const usePlayerStore = defineStore("player", {
       }
       const queue = useQueueStore();
       const next = queue.next();
-      if (next) await this.play(next);
+      if (next) await this.play(next, false);
     },
     async loadPinState(trackId: number): Promise<boolean> {
       let pinned = false;

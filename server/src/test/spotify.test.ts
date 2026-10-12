@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { initDb } from "../db.ts";
 import { loadOrInitMachineKey, encryptJson, decryptJson } from "../crypto.ts";
 import { normalizeSpotifyUris, spotifyAccessToken, SpotifyPipe, SpotifySourceError } from "../sources/spotify.ts";
-import { mintSession } from "../session.ts";
+import { mintTestSession as mintSession } from "./session-fixture.ts";
 import { dispatch, type AppCtx } from "../router.ts";
 import type { SourceSecrets } from "@jmmp/shared";
 import "../routes/index.ts";

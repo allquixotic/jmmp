@@ -12,8 +12,8 @@
         <div class="album-header-title">{{ albumTitle }}</div>
         <div class="album-header-artist">{{ artistName }}</div>
         <div class="album-actions">
-          <q-btn unelevated color="primary" icon="play_arrow" label="Play" :disable="tracks.length === 0" @click="playAll" />
-          <q-btn flat icon="shuffle" label="Shuffle" @click="shuffleAll" />
+          <q-btn unelevated color="primary" v-if="session.canControl" icon="play_arrow" label="Play" :disable="tracks.length === 0" @click="playAll" />
+          <q-btn flat v-if="session.canControl" icon="shuffle" label="Shuffle" @click="shuffleAll" />
         </div>
       </div>
     </header>
@@ -30,6 +30,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "src/api";

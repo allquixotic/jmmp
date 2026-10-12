@@ -13,12 +13,8 @@ export interface SessionClaims {
 
 const REG_TTL_SEC = 600;
 
-let secretCache: Uint8Array | null = null;
-
 function secret(rawSecret: string): Uint8Array {
-  if (secretCache) return secretCache;
-  secretCache = new TextEncoder().encode(rawSecret);
-  return secretCache;
+  return new TextEncoder().encode(rawSecret);
 }
 
 export async function issueSession(
@@ -46,11 +42,12 @@ export async function verifySession(
     const { payload } = await jwtVerify(token, secret(rawSecret), {
       algorithms: ["HS256"],
     });
-    if (!payload.jti) return null;
+    if (!payload.jti || typeof payload.did !== "string" || !payload.did ||
+      (payload.scope !== "registration" && payload.scope !== "full")) return null;
     return {
       jti: payload.jti,
-      did: String(payload["did"] ?? ""),
-      scope: payload["scope"] === "registration" ? "registration" : "full",
+      did: payload.did,
+      scope: payload.scope,
     };
   } catch {
     return null;

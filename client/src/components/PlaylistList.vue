@@ -54,7 +54,7 @@
           flat
           round
           dense
-          :icon="p.pinnedAt ? 'push_pin' : 'push_pin_outlined'"
+          v-if="session.canEditPlaylists" :icon="p.pinnedAt ? 'push_pin' : 'push_pin_outlined'"
           :class="['playlist-row-pin', { pinned: p.pinnedAt !== null }]"
           :aria-label="p.pinnedAt ? `Unpin ${p.name}` : `Pin ${p.name}`"
           @click.stop="onTogglePin(p)"
@@ -64,7 +64,7 @@
           round
           dense
           icon="play_arrow"
-          class="playlist-row-play"
+          v-if="session.canControl" class="playlist-row-play"
           :disable="p.trackCount === 0"
           :aria-label="`Play ${p.name}`"
           @click.stop="onRowPlay(p)"
@@ -94,13 +94,13 @@
           clickable
           v-close-popup
           :disable="!menuTarget || menuTarget.trackCount === 0"
-          @click="menuTarget && onRowPlay(menuTarget)"
+          v-if="session.canControl" @click="menuTarget && onRowPlay(menuTarget)"
         >
           <q-item-section avatar><q-icon name="play_arrow" /></q-item-section>
           <q-item-section>Play</q-item-section>
         </q-item>
         <q-separator />
-        <q-item clickable v-close-popup @click="menuTarget && onTogglePin(menuTarget)">
+        <q-item clickable v-close-popup v-if="session.canEditPlaylists" @click="menuTarget && onTogglePin(menuTarget)">
           <q-item-section avatar>
             <q-icon :name="menuTarget?.pinnedAt ? 'push_pin' : 'push_pin_outlined'" />
           </q-item-section>
@@ -112,16 +112,16 @@
           <q-item-section avatar><q-icon name="info" /></q-item-section>
           <q-item-section>Info</q-item-section>
         </q-item>
-        <q-item clickable v-close-popup @click="emitAction('rename')">
+        <q-item clickable v-close-popup v-if="session.canEditPlaylists" @click="emitAction('rename')">
           <q-item-section avatar><q-icon name="edit" /></q-item-section>
           <q-item-section>Rename</q-item-section>
         </q-item>
-        <q-item clickable v-close-popup @click="emitAction('storage')">
+        <q-item clickable v-close-popup v-if="session.canEditPlaylists" @click="emitAction('storage')">
           <q-item-section avatar><q-icon name="cloud_sync" /></q-item-section>
           <q-item-section>Storage</q-item-section>
         </q-item>
         <q-separator />
-        <q-item clickable v-close-popup @click="emitAction('delete')">
+        <q-item clickable v-close-popup v-if="session.canEditPlaylists" @click="emitAction('delete')">
           <q-item-section avatar><q-icon name="delete" /></q-item-section>
           <q-item-section class="text-red-5">Delete</q-item-section>
         </q-item>
@@ -155,6 +155,8 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 const playlistStore = usePlaylistsStore();
 const settings = useSettingsStore();
 const queue = useQueueStore();
@@ -181,6 +183,7 @@ function onClick(event: MouseEvent, playlist: Playlist): void {
 }
 
 async function onTogglePin(p: Playlist): Promise<void> {
+  if (!session.canEditPlaylists) return;
   try {
     await playlistStore.setPinned(p.id, p.pinnedAt === null);
   } catch {
@@ -189,7 +192,7 @@ async function onTogglePin(p: Playlist): Promise<void> {
 }
 
 async function onRowPlay(p: Playlist): Promise<void> {
-  if (p.trackCount === 0) return;
+  if (!session.canControl || p.trackCount === 0) return;
   try {
     const full = await playlistStore.get(p.id);
     if (full.tracks.length === 0) return;

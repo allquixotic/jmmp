@@ -3,6 +3,7 @@
 import type { ListenerPlaybackStatus, PlaybackCommand } from "@jmmp/shared";
 import { get, post, put, ok, fail } from "../router.ts";
 import { requireFullSession } from "../session.ts";
+import { catalogTrack } from "./catalog.ts";
 import { playbackController } from "../audio/controller.ts";
 
 get("/api/moq", async req => {
@@ -25,15 +26,18 @@ post("/api/moq/test/end", async req => {
 });
 get("/api/moq/listener", async req => {
   const session = await requireFullSession(req); if (session instanceof Response) return session;
+  if (session.role !== "admin" && !playbackController(req.ctx).settings.enabled) return fail("MoQ output is disabled", 409);
   try { return ok(await playbackController(req.ctx).listener(session)); }
   catch (error) { return fail(String(error), 409); }
 });
 get("/api/playback", async req => {
   const session = await requireFullSession(req); if (session instanceof Response) return session;
   const playback = playbackController(req.ctx);
-  return ok({ ...playback.status, nowPlaying: playback.nowPlaying() } satisfies ListenerPlaybackStatus,
+  const status = { ...playback.status, nowPlaying: playback.nowPlaying() } satisfies ListenerPlaybackStatus;
+  return ok({ ...status, currentTrack: status.trackId ? catalogTrack(req.ctx.db, status.trackId) : null },
     { headers: { "Cache-Control": "no-store" } });
 });
+get("/api/playback/output", async req => ok(playbackController(req.ctx).output(), { headers: { "Cache-Control": "no-store" } }));
 post("/api/playback", async req => {
   const session = await requireFullSession(req); if (session instanceof Response) return session;
   try {

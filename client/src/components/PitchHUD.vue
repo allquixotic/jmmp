@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted } from "vue";
 import { useSettingsStore } from "src/stores/settings";
 import { usePlayerStore } from "src/stores/player";
 import {
@@ -91,13 +91,7 @@ onMounted(async () => {
       /* ignore */
     }
   }
-  applyToPlayer();
 });
-
-watch(
-  () => [hud.value.pitchSemi, hud.value.tempoPct, hud.value.speedPct],
-  applyToPlayer
-);
 
 function applyToPlayer(): void {
   player.setParams({
@@ -109,6 +103,7 @@ function applyToPlayer(): void {
 
 function onChange(): void {
   settings.patch({ pitchHud: { ...hud.value } });
+  applyToPlayer();
 }
 
 function toggleCollapsed(): void {
@@ -119,6 +114,7 @@ function resetAll(): void {
   settings.patch({
     pitchHud: { ...hud.value, pitchSemi: 0, tempoPct: 0, speedPct: 0 },
   });
+  applyToPlayer();
 }
 
 function fmt(n: number): string {

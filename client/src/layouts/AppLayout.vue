@@ -58,7 +58,7 @@
     </q-footer>
 
     <NowPlayingScreen v-model:open="nowPlayingOpen" />
-    <PitchHUD v-if="$q.screen.gt.sm" />
+    <PitchHUD v-if="$q.screen.gt.sm && session.canControl" />
   </q-layout>
 </template>
 
@@ -82,25 +82,30 @@ const player = usePlayerStore();
 const router = useRouter();
 
 onMounted(() => {
+  player.startObserving();
   document.addEventListener("keydown", onPlaybackKeydown);
 });
 
 onBeforeUnmount(() => {
+  player.stopObserving();
   document.removeEventListener("keydown", onPlaybackKeydown);
 });
 
 watch(
   () => session.playerConflict,
   (conflict) => {
-    if (conflict && player.state === "playing") player.pause();
+    if (conflict && player.state === "playing" && !session.me?.moqEnabled) player.releaseLocalAudio();
   }
 );
+watch(() => session.canControl, allowed => { if (!allowed) player.releaseLocalAudio(); });
+watch(() => session.hasFullSession, signedIn => { if (!signedIn) { player.releaseLocalAudio(); void router.replace({ name: "login" }); } });
 
 function takeControl(): void {
   void session.takePlayerControl();
 }
 
 function onPlaybackKeydown(event: KeyboardEvent): void {
+  if (!session.canControl) return;
   handlePlaybackShortcut(event, () => void player.toggle());
 }
 

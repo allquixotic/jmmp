@@ -7,6 +7,10 @@ export async function addVirtualAuthenticator(
   page: Page,
   context: BrowserContext
 ): Promise<string> {
+  return (await createVirtualAuthenticator(page, context)).authenticatorId;
+}
+
+export async function createVirtualAuthenticator(page: Page, context: BrowserContext) {
   const cdp = await context.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
   const auth = await cdp.send("WebAuthn.addVirtualAuthenticator", {
@@ -18,5 +22,5 @@ export async function addVirtualAuthenticator(
       isUserVerified: true,
     },
   });
-  return auth.authenticatorId as string;
+  return { cdp, authenticatorId: auth.authenticatorId as string };
 }

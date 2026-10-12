@@ -55,8 +55,10 @@ test("V30 table dividers resize with mouse/touch/keys; header menus persist acro
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await page.getByText("Hide Title column", { exact: true }).click();
   await expect(title).toHaveCount(0);
+  // Wait for the touch menu to release its focus trap before focusing a header.
+  await expect(page.locator(".column-context-menu")).toHaveCount(0);
   const album = page.getByRole("button", { name: "Album column", exact: true });
-  await album.focus(); await page.keyboard.press("Shift+F10");
+  await album.focus(); await expect(album).toBeFocused(); await page.keyboard.press("Shift+F10");
   await page.getByText("Reset column layout", { exact: true }).click();
   await expect(title).toBeVisible(); await expect(artist).toBeVisible();
   await page.reload(); await expect(title).toBeVisible(); await expect(artist).toBeVisible();

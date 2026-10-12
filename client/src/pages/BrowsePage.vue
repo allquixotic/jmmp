@@ -33,8 +33,8 @@
             <div class="album-detail-title">{{ selected.title }}</div>
             <div class="album-detail-artist">{{ selected.artist }}</div>
             <div class="q-mt-md">
-              <q-btn unelevated color="primary" icon="play_arrow" label="Play" @click="playAll" />
-              <q-btn flat class="q-ml-sm" icon="shuffle" label="Shuffle" @click="shuffleAll" />
+              <q-btn unelevated color="primary" v-if="session.canControl" icon="play_arrow" label="Play" @click="playAll" />
+              <q-btn flat class="q-ml-sm" v-if="session.canControl" icon="shuffle" label="Shuffle" @click="shuffleAll" />
             </div>
           </div>
         </q-card-section>
@@ -52,6 +52,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useQuasar } from "quasar";

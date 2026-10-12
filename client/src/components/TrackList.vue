@@ -165,7 +165,7 @@
       <q-list dense class="track-context-menu-list">
         <q-item-label header class="ellipsis">{{ rowMenuTitle }}</q-item-label>
         <q-item
-          v-if="rowMenuTrack"
+          v-if="rowMenuTrack && session.canControl"
           clickable
           v-close-popup
           @click="playFromMenu"
@@ -173,16 +173,16 @@
           <q-item-section avatar><q-icon name="play_arrow" /></q-item-section>
           <q-item-section>Play</q-item-section>
         </q-item>
-        <q-item clickable v-close-popup :disable="actionBusy" @click="addToQueue">
+        <q-item v-if="session.canControl" clickable v-close-popup :disable="actionBusy" @click="addToQueue">
           <q-item-section avatar><q-icon name="queue_music" /></q-item-section>
           <q-item-section>{{ rowMenuQueueLabel }}</q-item-section>
         </q-item>
-        <q-item clickable v-close-popup @click="playlistPickerOpen = true">
+        <q-item v-if="session.canEditPlaylists" clickable v-close-popup @click="playlistPickerOpen = true">
           <q-item-section avatar><q-icon name="playlist_add" /></q-item-section>
           <q-item-section>{{ rowMenuPlaylistLabel }}…</q-item-section>
         </q-item>
         <q-item
-          v-if="removable"
+          v-if="removable && session.canEditPlaylists"
           clickable
           v-close-popup
           :disable="removeBusy"
@@ -318,6 +318,8 @@ const emit = defineEmits<{
 }>();
 
 const $q = useQuasar();
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 const playlists = usePlaylistsStore();
 const queue = useQueueStore();
 const sources = useSourcesStore();
@@ -349,7 +351,7 @@ const dragState = ref<{
 const selectedIdSet = computed(() => new Set(props.selectedTrackIds ?? []));
 const selectedOccurrenceSet = computed(() => new Set(props.selectedTracks ?? []));
 const columns = useTableColumnsStore();
-const layoutColumns = computed(() => TABLE_COLUMNS.filter(column => columns.visible.includes(column) && (column !== "reorder" || props.reorderable)));
+const layoutColumns = computed(() => TABLE_COLUMNS.filter(column => columns.visible.includes(column) && (column !== "reorder" || (props.reorderable && session.canEditPlaylists))));
 const visibleColumns = computed(() => layoutColumns.value.filter((column): column is TrackColumnKey => column !== "title" && column !== "number" && column !== "reorder"));
 const headerElement = ref<HTMLElement | null>(null), tableElement = ref<HTMLElement | null>(null);
 const headerMenu = ref<{ show(evt: Event): void } | null>(null);
@@ -522,7 +524,7 @@ async function addToQueue(): Promise<void> {
 function playFromMenu(): void {
   const track = rowMenuTrack.value;
   if (!track || rowMenuTrackIndex.value < 0) return;
-  emit("play", track, rowMenuTrackIndex.value);
+  if (session.canControl) emit("play", track, rowMenuTrackIndex.value);
 }
 
 function requestRemove(): void {
@@ -535,7 +537,7 @@ function onCoverClick(event: MouseEvent, track: Track, index: number): void {
     event.preventDefault();
     return;
   }
-  emit("play", track, index);
+  if (session.canControl) emit("play", track, index);
 }
 
 function onRowClick(event: MouseEvent, track: Track, index: number): void {
@@ -545,18 +547,18 @@ function onRowClick(event: MouseEvent, track: Track, index: number): void {
   }
   if (event.button !== 0) return;
   if (!props.selectable) {
-    emit("play", track, index);
+    if (session.canControl) emit("play", track, index);
     return;
   }
   emit("select", track, index, modifiersFromEvent(event));
 }
 
 function onRowDoubleClick(track: Track, index: number): void {
-  if (props.selectable) emit("play", track, index);
+  if (props.selectable && session.canControl) emit("play", track, index);
 }
 
 function onRowEnter(track: Track, index: number): void {
-  emit("play", track, index);
+  if (session.canControl) emit("play", track, index);
 }
 
 function onRowContextMenu(event: MouseEvent, track: Track, index: number): void {
@@ -741,7 +743,7 @@ function sortIcon(key: TrackSortKey): string {
 }
 
 function startReorder(event: PointerEvent, index: number): void {
-  if (!props.reorderable || props.tracks.length < 2) return;
+  if (!session.canEditPlaylists || !props.reorderable || props.tracks.length < 2) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
   const handle = event.currentTarget as HTMLElement;
   handle.setPointerCapture(event.pointerId);

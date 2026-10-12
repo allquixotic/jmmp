@@ -26,7 +26,7 @@
 <script setup lang="ts">
 defineProps<{
   label?: string;
-  action?: () => void;
+  action?: (() => void) | undefined;
   actionIcon?: string;
 }>();
 </script>

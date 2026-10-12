@@ -4,9 +4,14 @@
 -->
 
 <template>
-  <router-link
+  <a v-if="external" :href="external" target="_blank" rel="noopener noreferrer" class="nav-item">
+    <q-icon :name="icon" size="18px" class="nav-item-icon" />
+    <span class="nav-item-label">{{ label }}</span>
+    <q-icon name="open_in_new" size="14px" />
+  </a>
+  <router-link v-else
     v-slot="{ isActive, href, navigate }"
-    :to="to"
+    :to="to ?? '/'"
     custom
   >
     <a
@@ -31,7 +36,8 @@
 import type { RouteLocationRaw } from "vue-router";
 
 defineProps<{
-  to: RouteLocationRaw;
+  to?: RouteLocationRaw;
+  external?: string;
   icon: string;
   label: string;
   trailingIcon?: string | undefined;

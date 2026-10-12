@@ -12,7 +12,8 @@ export interface SourceInstance {
   id: number;
   kind: SourceKind;
   name: string;
-  config: SourceConfig;
+  /** Only administrators receive existing source configuration. */
+  config?: SourceConfig;
   fetchMode: FetchMode;
   cachePolicy: CachePolicy;
   lastScannedAt: number | null;

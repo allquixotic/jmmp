@@ -39,6 +39,7 @@
       <NavSection label="">
         <NavItem icon="home" label="Home" :to="{ name: 'home' }" />
         <NavItem icon="explore" label="Browse" :to="{ name: 'browse' }" />
+        <NavItem v-if="session.me?.streamUrl" icon="radio" label="Listen to stream" :external="session.me.streamUrl" />
       </NavSection>
 
       <NavSection label="Library">
@@ -48,7 +49,7 @@
         <NavItem icon="schedule" label="Recently Added" :to="{ name: 'library-recent' }" />
       </NavSection>
 
-      <NavSection label="Playlists" :action="onCreatePlaylist" action-icon="add">
+      <NavSection label="Playlists" :action="session.canEditPlaylists ? onCreatePlaylist : undefined" action-icon="add">
         <NavItem icon="queue_music" label="All playlists" :to="{ name: 'playlists' }" />
         <NavItem
           v-for="p in playlists.playlists"
@@ -61,7 +62,7 @@
       </NavSection>
 
       <NavSection label="Setup">
-        <NavItem icon="cloud" label="Sources" :to="{ name: 'sources' }" />
+        <NavItem v-if="session.canAddSources" icon="cloud" label="Sources" :to="{ name: 'sources' }" />
         <NavItem icon="tune" label="Settings" :to="{ name: 'settings' }" />
       </NavSection>
     </q-scroll-area>

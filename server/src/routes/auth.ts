@@ -13,7 +13,8 @@ import type {
   AuthenticationResponseJSON,
 } from "@simplewebauthn/server";
 import type { AuthStatusResponse, PasskeyListResponse } from "@jmmp/shared";
-import { fail, get, ok, post, readJson, type Req } from "../router.ts";
+import { isPasskeyRole, type PasskeyRole } from "@jmmp/shared";
+import { fail, get, ok, patch, post, readJson, type Req } from "../router.ts";
 import {
   bytesEqual,
   generateBootstrapToken,
@@ -24,7 +25,7 @@ import {
   isSecureOrigin,
   mintSession,
   readSession,
-  requireFullSession,
+  requireAdminSession,
   requireRegOrFullSession,
 } from "../session.ts";
 import { clearCookie } from "../jwt.ts";
@@ -34,6 +35,7 @@ import { insertRegisteredPasskey, passkeyRegistrationOptions } from "../passkey-
 let lastDebugBootstrapToken: string | null = null;
 
 interface PasskeyRow {
+  role: PasskeyRole;
   id: number;
   credential_id: Uint8Array;
   public_key: Uint8Array;
@@ -175,7 +177,7 @@ get("/api/auth/passkey/register/options", async (req: Req) => {
 post("/api/auth/passkey/register/verify", async (req: Req) => {
   const session = await requireRegOrFullSession(req);
   if (session instanceof Response) return session;
-  const body = await readJson<{ response: RegistrationResponseJSON; nickname?: string }>(
+  const body = await readJson<{ response: RegistrationResponseJSON; nickname?: string | null }>(
     req
   );
   if (!body.response) return fail("response required", 400, "missing_response");
@@ -198,13 +200,18 @@ post("/api/auth/passkey/register/verify", async (req: Req) => {
   if (!verification.verified || !verification.registrationInfo) {
     return fail("verification failed", 400, "verify");
   }
-  insertRegisteredPasskey(req.ctx.db, body.response, verification.registrationInfo, body.nickname ?? null);
+  const current = await requireRegOrFullSession(req);
+  if (current instanceof Response) return current;
+  if (body.nickname !== undefined && body.nickname !== null && (typeof body.nickname !== "string" || body.nickname.length > 120)) return fail("Passkey label must be at most 120 characters", 400);
+  const passkeyId = insertRegisteredPasskey(req.ctx.db, body.response, verification.registrationInfo, body.nickname?.trim() || null);
 
   req.ctx.db.run(
     "DELETE FROM bootstrap_tokens WHERE consumed_at IS NOT NULL"
   );
 
-  const { cookie } = await mintSession(req.ctx, session.did, "full");
+  // Adding a credential does not change which passkey authenticated this admin.
+  if (session.scope === "full") return ok({ verified: true });
+  const { cookie } = await mintSession(req.ctx, session.did, "full", passkeyId);
   return ok({ verified: true }, { headers: { "Set-Cookie": cookie } });
 });
 
@@ -269,16 +276,17 @@ post("/api/auth/passkey/auth/verify", async (req: Req) => {
   );
 
   const did = crypto.randomUUID();
-  const { cookie } = await mintSession(req.ctx, did, "full");
+  const { cookie } = await mintSession(req.ctx, did, "full", passkey.id);
   return ok({ verified: true }, { headers: { "Set-Cookie": cookie } });
 });
 
 get("/api/auth/passkeys", async (req: Req) => {
-  const session = await requireFullSession(req);
+  const session = await requireAdminSession(req);
   if (session instanceof Response) return session;
   const rows = listPasskeys(req.ctx.db);
   const body: PasskeyListResponse = {
     passkeys: rows.map((p) => ({
+      role: p.role,
       id: p.id,
       nickname: p.nickname,
       transports: p.transports ? (JSON.parse(p.transports) as string[]) : [],
@@ -291,8 +299,33 @@ get("/api/auth/passkeys", async (req: Req) => {
 
 import { del } from "../router.ts";
 
+function lastAdmin(db: Database, id: number): boolean {
+  return !!db.query("SELECT id FROM passkeys WHERE id=? AND role='admin' AND (SELECT COUNT(*) FROM passkeys WHERE role='admin')=1").get(id);
+}
+
+patch("/api/auth/passkeys/:id", async req => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return fail("bad id", 400);
+  const body = await readJson<{ nickname?: unknown; role?: unknown }>(req);
+  if (!body || typeof body !== "object" || (body.nickname === undefined && body.role === undefined)) return fail("label or role required", 400);
+  if (body.nickname !== undefined && body.nickname !== null && (typeof body.nickname !== "string" || body.nickname.length > 120)) return fail("Passkey label must be at most 120 characters", 400);
+  if (body.role !== undefined && !isPasskeyRole(body.role)) return fail("Invalid passkey role", 400);
+  const session = await requireAdminSession(req);
+  if (session instanceof Response) return session;
+  return req.ctx.db.transaction(() => {
+    if (!req.ctx.db.query("SELECT id FROM passkeys WHERE id=?").get(id)) return fail("Passkey not found", 404);
+    if (body.role !== undefined && body.role !== "admin" && lastAdmin(req.ctx.db, id)) return fail("Keep at least one admin passkey", 409, "last_admin");
+    if (body.nickname !== undefined) req.ctx.db.run("UPDATE passkeys SET nickname=? WHERE id=?", [typeof body.nickname === "string" ? body.nickname.trim() || null : null, id]);
+    if (body.role !== undefined) {
+      req.ctx.db.run("UPDATE passkeys SET role=? WHERE id=?", [body.role as PasskeyRole, id]);
+      if (body.role === "viewer") req.ctx.db.run("UPDATE session_devices SET is_player=0 WHERE passkey_id=?", [id]);
+    }
+    return ok({ updated: id });
+  })();
+});
+
 del("/api/auth/passkeys/:id", async (req: Req) => {
-  const session = await requireFullSession(req);
+  const session = await requireAdminSession(req);
   if (session instanceof Response) return session;
   const id = parseInt(req.params.id!, 10);
   if (!Number.isFinite(id)) return fail("bad id", 400);
@@ -304,7 +337,9 @@ del("/api/auth/passkeys/:id", async (req: Req) => {
       "last_passkey"
     );
   }
+  if (lastAdmin(req.ctx.db, id)) return fail("Keep at least one admin passkey", 409, "last_admin");
   req.ctx.db.run("DELETE FROM passkeys WHERE id = ?", [id]);
+  // Foreign-key cascade revokes every session bound to the deleted credential.
   return ok({ deleted: id });
 });
 

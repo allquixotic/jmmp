@@ -1,9 +1,10 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
-import { DEFAULT_DSP_PARAMS, type Track, type DspParams, type MoqOutputStatus } from "@jmmp/shared";
+import { DEFAULT_DSP_PARAMS, type Track, type DspParams, type PlaybackOutput } from "@jmmp/shared";
 import { AudioPlayer, type PlaybackCacheOptions } from "./pipeline";
 import { MoqPlayer } from "./moq";
 import { api } from "src/api";
+import { useSessionStore } from "src/stores/session";
 
 /** Chooses exactly one audio path. MoQ never reads source bytes or OPFS. */
 export class RoutingPlayer extends EventTarget {
@@ -32,10 +33,12 @@ export class RoutingPlayer extends EventTarget {
       if (localStorage.getItem("jmmp-moq-enabled") === "true") throw new Error("MoQ playback requires a connection to the server");
       return;
     }
-    const output = await api.get<MoqOutputStatus>("/api/moq");
-    localStorage.setItem("jmmp-moq-enabled", String(output.settings.enabled));
-    const next = output.settings.enabled ? this.moq : this.local;
-    this.dispatchEvent(new CustomEvent("mode", { detail: output.settings.enabled }));
+    const output = await api.get<PlaybackOutput>("/api/playback/output");
+    const me = useSessionStore().me;
+    if (me) { me.moqEnabled = output.enabled; me.streamUrl = output.listenUrl; }
+    localStorage.setItem("jmmp-moq-enabled", String(output.enabled));
+    const next = output.enabled ? this.moq : this.local;
+    this.dispatchEvent(new CustomEvent("mode", { detail: output.enabled }));
     if (next === this.active) {
       if (reconnect && next === this.moq) { this.moq.dispose(); await this.moq.listen(); }
       return;
@@ -59,10 +62,18 @@ export class RoutingPlayer extends EventTarget {
     this.track = track; this.cache = cache; this.position = 0;
     await this.active.play(track, cache);
   }
-  pause() { this.active.pause(); }
-  resume() { this.active.resume(); }
-  stop() { this.playEpoch++; this.active.stop(); this.track = undefined; }
-  async seek(seconds: number) { await this.active.seek(seconds); }
+  private controlBackend() { return useSessionStore().me?.moqEnabled ? this.moq : this.active; }
+  pause() { this.controlBackend().pause(); }
+  resume() { this.controlBackend().resume(); }
+  stop() { this.playEpoch++; this.controlBackend().stop(); this.track = undefined; }
+  /** Release this device's audio without issuing a shared playback command. */
+  suspend() { this.playEpoch++; this.local.stop(); this.moq.dispose(); this.track = undefined; }
+  async seek(seconds: number) { await this.controlBackend().seek(seconds); }
   setParams(params: Partial<DspParams>) { this.params = { ...this.params, ...params }; this.active.setParams(params); }
-  setVolume(volume: number) { this.params.volume = volume; this.active.setVolume(volume); }
+  controlParams(params: Partial<DspParams>) {
+    this.params = { ...this.params, ...params };
+    const backend = this.controlBackend();
+    if (backend === this.moq) this.moq.controlParams(params); else backend.setParams(params);
+  }
+  setVolume(volume: number) { this.controlParams({ volume }); }
 }

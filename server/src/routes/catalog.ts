@@ -98,6 +98,11 @@ function trackFromRow(row: TrackRow): Track {
   };
 }
 
+export function catalogTrack(db: Database, id: number): Track | null {
+  const row = db.query<TrackRow, [number]>("SELECT * FROM tracks WHERE id=?").get(id);
+  return row ? trackFromRow(row) : null;
+}
+
 get("/api/catalog/artists", async (req: Req) => {
   const session = await requireFullSession(req);
   if (session instanceof Response) return session;
@@ -764,12 +769,14 @@ post("/api/catalog/upload", async (req: Req) => {
   const sourceRow = req.ctx.db
     .query<{ kind: string }, [number]>("SELECT kind FROM sources WHERE id = ?")
     .get(body.sourceId);
+  if (session.role !== "admin" && body.removedSourceTrackIds?.length) return fail("Only admins can delete uploaded tracks", 403, "role");
   if (!sourceRow) return fail("source not found", 404);
   if (sourceRow.kind !== "local") {
     return fail("upload only allowed for local sources", 400);
   }
 
   for (const track of body.tracks) {
+    if (session.role !== "admin" && req.ctx.db.query("SELECT 1 FROM tracks WHERE source_id=? AND source_track_id=?").get(body.sourceId, track.sourceTrackId)) return fail("Only admins can replace uploaded track metadata", 403, "role");
     if (!req.ctx.db.query("SELECT 1 FROM local_files WHERE source_id = ? AND source_track_id = ?").get(body.sourceId, track.sourceTrackId)) {
       return fail("Upload audio to the server before adding local catalog metadata", 400);
     }

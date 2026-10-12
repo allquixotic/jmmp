@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,16 +66,12 @@ describe("db / migrations", () => {
 
   test("migrations are idempotent", () => {
     const dir = freshDir();
-    initDb(dir).close();
+    const first = initDb(dir);
+    const applied = first.query("SELECT version FROM _schema_migrations ORDER BY version").all();
+    first.close();
     // re-open: shouldn't try to re-apply.
-    const db = new Database(join(dir, "jmmp.sqlite"));
-    const v = db
-      .query<
-        { count: number },
-        []
-      >("SELECT COUNT(*) AS count FROM _schema_migrations")
-      .get();
-    expect(v?.count).toBe(9);
+    const db = initDb(dir);
+    expect(db.query("SELECT version FROM _schema_migrations ORDER BY version").all()).toEqual(applied);
     db.close();
   });
 });

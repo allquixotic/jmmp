@@ -75,7 +75,11 @@ get("/api/sources", async (req: Req) => {
   const rows = req.ctx.db
     .query<SourceRow, []>("SELECT * FROM sources ORDER BY created_at")
     .all();
-  const body: ListSourcesResponse = { sources: rows.map(rowToInstance) };
+  const body: ListSourcesResponse = { sources: rows.map(row => {
+    const source = rowToInstance(row);
+    if (session.role !== "admin") delete source.config;
+    return source;
+  }) };
   return ok(body);
 });
 
@@ -112,6 +116,7 @@ post("/api/sources", async (req: Req) => {
     .get(result.lastInsertRowid as number);
   if (!row) return fail("insert failed", 500);
   const resp: CreateSourceResponse = { source: rowToInstance(row) };
+  if (session.role !== "admin") delete resp.source.config;
   return ok(resp, { status: 201 });
 });
 

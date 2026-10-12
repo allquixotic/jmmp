@@ -10,7 +10,7 @@
       :subtitle="`${playlists.playlists.length} playlists`"
       view-toggle
     >
-      <template v-slot:actions>
+      <template v-slot:actions v-if="session.canEditPlaylists">
         <q-btn flat icon="download" label="Import Spotify playlist" @click="spotifyImportOpen = true" />
         <q-btn unelevated color="primary" icon="add" label="New playlist" @click="onCreate" />
       </template>
@@ -28,7 +28,7 @@
       @menu-action="onMenuAction"
     />
 
-    <ImportSpotifyPlaylistDialog v-model="spotifyImportOpen" @imported="onImported" />
+    <ImportSpotifyPlaylistDialog v-if="session.canEditPlaylists" v-model="spotifyImportOpen" @imported="onImported" />
 
     <q-dialog v-model="storageDialogOpen">
       <q-card class="playlist-dialog">
@@ -91,6 +91,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { usePlaylistsStore } from "src/stores/playlists";

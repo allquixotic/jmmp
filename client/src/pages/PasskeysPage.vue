@@ -4,7 +4,7 @@
 -->
 
 <template>
-  <q-page>
+  <q-page v-if="session.isAdmin">
     <div class="q-pa-lg">
     <div class="row items-center q-mb-md">
       <div class="text-h5">Passkeys</div>
@@ -35,17 +35,22 @@
             </q-item-label>
           </q-item-section>
           <q-item-section side>
+            <q-btn flat dense icon="edit" :aria-label="`Rename ${p.nickname || `Passkey #${p.id}`}`" @click="onRename(p)"><q-tooltip>Rename</q-tooltip></q-btn>
+          </q-item-section>
+          <q-item-section side>
+            <q-select :model-value="p.role" :options="roles" emit-value map-options dense outlined label="Role" style="min-width: 120px" :aria-label="`Role for ${p.nickname || `Passkey #${p.id}`}`" @update:model-value="role => onRole(p, role)" />
+          </q-item-section>
+          <q-item-section side>
             <q-btn
               flat
               dense
               icon="delete"
               color="negative"
-              :disable="passkeys.length <= 1"
+              :disable="isLastAdmin(p) || passkeys.length <= 1"
               @click="onDelete(p.id)"
             >
-              <q-tooltip v-if="passkeys.length <= 1">
-                Refusing to delete the last passkey. Run
-                <code>jmmp wipe-passkeys</code> on the server instead.
+              <q-tooltip v-if="isLastAdmin(p) || passkeys.length <= 1">
+                Keep at least one admin passkey. Register another admin before removing this one.
               </q-tooltip>
             </q-btn>
           </q-item-section>
@@ -58,17 +63,39 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { api } from "src/api";
 import { describeApiError, registerNewPasskey } from "src/auth";
 import type { PasskeyListResponse, PasskeySummary } from "@jmmp/shared";
 import PasskeyInvitations from "src/components/PasskeyInvitations.vue";
 
+import { PASSKEY_ROLES, isPasskeyRole } from "@jmmp/shared";
+import { useSessionStore } from "src/stores/session";
+import { useRouter } from "vue-router";
+const session = useSessionStore(), router = useRouter();
+const roles = PASSKEY_ROLES.map(value => ({ value, label: value === "dj" ? "DJ" : value[0]!.toUpperCase() + value.slice(1) }));
+function isLastAdmin(p: PasskeySummary): boolean { return p.role === "admin" && passkeys.value.filter(k => k.role === "admin").length === 1; }
+async function onRename(p: PasskeySummary): Promise<void> {
+  const nickname = window.prompt("Passkey label:", p.nickname ?? "");
+  if (nickname === null) return;
+  error.value = null;
+  try { await api.patch(`/api/auth/passkeys/${p.id}`, { nickname }); await load(); }
+  catch (err) { error.value = describeApiError(err); }
+}
+async function onRole(p: PasskeySummary, role: unknown): Promise<void> {
+  if (!isPasskeyRole(role) || role === p.role) return;
+  error.value = null;
+  try {
+    await api.patch(`/api/auth/passkeys/${p.id}`, { role }); await session.refreshStatus();
+    if (!session.isAdmin) await router.push({ name: "home" }); else await load();
+  } catch (err) { error.value = describeApiError(err); }
+}
 const passkeys = ref<PasskeySummary[]>([]);
 const adding = ref(false);
 const error = ref<string | null>(null);
 
 onMounted(load);
+watch(() => session.isAdmin, admin => { if (!admin) void router.replace({ name: "home" }); });
 
 async function load(): Promise<void> {
   try {

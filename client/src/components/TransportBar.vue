@@ -22,10 +22,10 @@
         dense
         size="md"
         :icon="player.state === 'playing' ? 'pause' : 'play_arrow'"
-        class="pill-play"
+        v-if="session.canControl" class="pill-play"
         @click.stop="player.toggle"
       />
-      <q-btn flat round dense size="sm" icon="skip_next" @click.stop="next" />
+      <q-btn flat round dense size="sm" v-if="session.canControl" icon="skip_next" @click.stop="next" />
     </div>
 
     <!-- Full transport (tablet+) -->
@@ -51,7 +51,7 @@
 
       <!-- Transport zone -->
       <div class="zone-controls">
-        <div class="transport-buttons">
+        <div v-if="session.canControl" class="transport-buttons">
           <q-btn flat round dense size="sm" icon="shuffle" :color="shuffle ? 'primary' : undefined" @click="shuffle = !shuffle" />
           <q-btn flat round dense icon="skip_previous" size="md" @click="prev" />
           <q-btn unelevated round size="md" class="play-btn" :icon="player.state === 'playing' ? 'pause' : 'play_arrow'" @click="player.toggle" />
@@ -61,6 +61,7 @@
         <div class="scrubber">
           <span class="time-label mono">{{ formatTime(player.position) }}</span>
           <q-slider
+            :disable="!session.canControl"
             :model-value="player.position"
             :min="0"
             :max="player.duration || 0"
@@ -76,7 +77,7 @@
       </div>
 
       <!-- Secondary -->
-      <div class="zone-extras">
+      <div v-if="session.canControl" class="zone-extras">
         <q-btn flat round dense size="sm" icon="tune" @click="$emit('open-now-playing')">
           <q-tooltip>Pitch controls</q-tooltip>
         </q-btn>
@@ -129,6 +130,8 @@ import { artUrl as fetchArtUrl } from "src/storage/art-cache";
 defineProps<{ compact?: boolean }>();
 defineEmits<{ "open-now-playing": [] }>();
 
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 const player = usePlayerStore();
 const queue = useQueueStore();
 const shuffle = ref(false);

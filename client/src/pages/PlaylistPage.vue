@@ -24,12 +24,12 @@
             <q-btn
               unelevated
               color="primary"
-              icon="play_arrow"
+              v-if="session.canControl" icon="play_arrow"
               label="Play"
               :disable="playlist.tracks.length === 0"
               @click="playAll"
             />
-            <q-btn flat icon="shuffle" label="Shuffle" @click="shuffleAll" />
+            <q-btn flat v-if="session.canControl" icon="shuffle" label="Shuffle" @click="shuffleAll" />
             <q-btn flat icon="view_column" label="Columns">
               <q-menu>
                 <q-list dense style="min-width: 180px">
@@ -59,15 +59,15 @@
                     <q-item-section avatar><q-icon name="info" /></q-item-section>
                     <q-item-section>Info</q-item-section>
                   </q-item>
-                  <q-item clickable v-close-popup @click="storageDialogOpen = true">
+                  <q-item v-if="session.canEditPlaylists" clickable v-close-popup @click="storageDialogOpen = true">
                     <q-item-section avatar><q-icon name="cloud_sync" /></q-item-section>
                     <q-item-section>Storage</q-item-section>
                   </q-item>
-                  <q-item clickable v-close-popup @click="renamePlaylist">
+                  <q-item v-if="session.canEditPlaylists" clickable v-close-popup @click="renamePlaylist">
                     <q-item-section avatar><q-icon name="edit" /></q-item-section>
                     <q-item-section>Rename</q-item-section>
                   </q-item>
-                  <q-item clickable v-close-popup @click="deletePlaylist">
+                  <q-item v-if="session.canEditPlaylists" clickable v-close-popup @click="deletePlaylist">
                     <q-item-section avatar><q-icon name="delete" /></q-item-section>
                     <q-item-section>Delete</q-item-section>
                   </q-item>
@@ -80,12 +80,12 @@
       <TrackList
         :tracks="displayTracks"
         :playing-track-id="player.current?.id ?? null"
-        :reorderable="!sortKey && playlist.tracks.length > 1"
+        :reorderable="session.canEditPlaylists && !sortKey && playlist.tracks.length > 1"
         sortable
         :sort-key="sortKey"
         :sort-direction="sortDirection"
         selectable
-        removable
+        :removable="session.canEditPlaylists"
         link-metadata
         :remove-busy="mutationBusy"
         :current-playlist-id="playlist.id"
@@ -161,6 +161,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 import { useTableColumnsStore } from "src/stores/table-columns";
 import { TABLE_COLUMNS, tableColumnLabel, type TableColumnKey } from "src/tracks/columns";
 import { computed, onMounted, ref, watch } from "vue";

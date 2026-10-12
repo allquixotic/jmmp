@@ -4,7 +4,7 @@ import { verifyRegistrationResponse, type RegistrationResponseJSON } from "@simp
 import type { PasskeyInvitation } from "@jmmp/shared";
 import { del, fail, get, ok, post, type Req } from "../router.ts";
 import { sha256 } from "../crypto.ts";
-import { mintSession, requireFullSession } from "../session.ts";
+import { mintSession, requireAdminSession } from "../session.ts";
 import { configuredRequestOrigin, originList } from "../origins.ts";
 import { insertRegisteredPasskey, passkeyRegistrationOptions } from "../passkey-registration.ts";
 
@@ -58,7 +58,7 @@ async function activeInvitation(req: Req, token: unknown): Promise<InvitationRow
 }
 
 post(management, async req => {
-  const session = await requireFullSession(req); if (session instanceof Response) return session;
+  const session = await requireAdminSession(req); if (session instanceof Response) return session;
   if (!allowedOrigin(req)) return error("Use a configured jmmp origin", 403);
   const body = await bodyOf(req); if (body instanceof Response) return body;
   const expiresInSeconds = body.expiresInSeconds ?? 86400;
@@ -67,6 +67,7 @@ post(management, async req => {
   if (body.label !== undefined && body.label !== null && (typeof body.label !== "string" || body.label.length > 120)) return error("Invitation label must be at most 120 characters", 400);
   const label = typeof body.label === "string" ? body.label.trim() || null : null;
   const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url"), hash = await sha256(token);
+  const current = await requireAdminSession(req); if (current instanceof Response) return current;
   const invitation = req.ctx.db.transaction(() => {
     const count = req.ctx.db.query<{ n: number }, []>("SELECT count(*) n FROM passkey_invitations WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at>unixepoch()").get()!.n;
     if (count >= 20) return null;
@@ -80,14 +81,14 @@ post(management, async req => {
 });
 
 get(management, async req => {
-  const session = await requireFullSession(req); if (session instanceof Response) return session;
+  const session = await requireAdminSession(req); if (session instanceof Response) return session;
   const rows = req.ctx.db.query<InvitationRow, []>(`SELECT ${columns} FROM passkey_invitations
     ORDER BY (consumed_at IS NULL AND revoked_at IS NULL AND expires_at>unixepoch()) DESC,id DESC LIMIT 100`).all();
   return ok({ invitations: rows.map(invitationOf) }, { headers: noStore });
 });
 
 del(management + "/:id", async req => {
-  const session = await requireFullSession(req); if (session instanceof Response) return session;
+  const session = await requireAdminSession(req); if (session instanceof Response) return session;
   if (!allowedOrigin(req)) return error("Use a configured jmmp origin", 403);
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id) || id <= 0) return error("Invalid invitation ID", 400);
@@ -146,19 +147,21 @@ post(enrollment + "/verify", async req => {
   if (!verification.verified || !verification.registrationInfo) return error("Passkey verification failed; try again", 400);
   const info = verification.registrationInfo;
   const nickname = typeof body.nickname === "string" ? body.nickname.trim() || invitation.label : invitation.label;
+  let passkeyId: number;
   try {
-    req.ctx.db.transaction(() => {
+    passkeyId = req.ctx.db.transaction(() => {
       const used = req.ctx.db.run("UPDATE passkey_invitations SET consumed_at=unixepoch() WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>unixepoch()", [invitation.id]);
       if (!used.changes) throw new InvitationUnavailable();
       if (req.ctx.db.query("SELECT id FROM passkeys WHERE credential_id=?").get(Buffer.from(info.credential.id, "base64url"))) throw new CredentialExists();
-      insertRegisteredPasskey(req.ctx.db, response, info, nickname);
+      const id = insertRegisteredPasskey(req.ctx.db, response, info, nickname);
       req.ctx.db.run("DELETE FROM passkey_invitation_challenges WHERE invitation_id=?", [invitation.id]);
+      return id;
     })();
   } catch (err) {
     if (err instanceof InvitationUnavailable) return invalid();
     if (err instanceof CredentialExists) return error("This authenticator is already registered; use another passkey", 409);
     return error("Could not save your passkey; try again", 500);
   }
-  const { cookie } = await mintSession(req.ctx, crypto.randomUUID(), "full");
+  const { cookie } = await mintSession(req.ctx, crypto.randomUUID(), "full", passkeyId);
   return ok({ verified: true }, { headers: { ...noStore, "Set-Cookie": cookie } });
 });

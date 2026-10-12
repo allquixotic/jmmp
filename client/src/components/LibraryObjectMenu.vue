@@ -16,16 +16,16 @@
         <q-item-section avatar><q-icon name="open_in_new" /></q-item-section>
         <q-item-section>Open</q-item-section>
       </q-item>
-      <q-item clickable v-close-popup :disable="actionBusy" @click="playNow">
+      <q-item clickable v-close-popup :disable="actionBusy" v-if="session.canControl" @click="playNow">
         <q-item-section avatar><q-icon name="play_arrow" /></q-item-section>
         <q-item-section>Play</q-item-section>
       </q-item>
-      <q-item clickable v-close-popup :disable="actionBusy" @click="addToQueue">
+      <q-item clickable v-close-popup :disable="actionBusy" v-if="session.canControl" @click="addToQueue">
         <q-item-section avatar><q-icon name="queue_music" /></q-item-section>
         <q-item-section>Add to queue</q-item-section>
       </q-item>
       <q-separator />
-      <q-item clickable v-close-popup @click="playlistPickerOpen = true">
+      <q-item clickable v-close-popup v-if="session.canEditPlaylists" @click="playlistPickerOpen = true">
         <q-item-section avatar><q-icon name="playlist_add" /></q-item-section>
         <q-item-section>{{ playlistLabel }}…</q-item-section>
       </q-item>
@@ -90,6 +90,8 @@ import type { Playlist, Track } from "@jmmp/shared";
 import PlaylistPickerDialog from "./PlaylistPickerDialog.vue";
 
 const $q = useQuasar();
+import { useSessionStore } from "src/stores/session";
+const session = useSessionStore();
 const playlists = usePlaylistsStore();
 const queue = useQueueStore();
 const player = usePlayerStore();

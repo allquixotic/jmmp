@@ -47,7 +47,7 @@ export function listenerOptions(listener: MoqListener): Pick<Net.Connection.Conn
 }
 
 export class MoqPlayer extends EventTarget {
-  constructor(private publicListener = false) { super(); }
+  constructor(private publicListener = false, private readOnly = false) { super(); }
   private watch: Watch.Player | undefined;
   private connection: Net.Connection | undefined;
   private watchModule: typeof Watch | undefined;
@@ -263,7 +263,7 @@ export class MoqPlayer extends EventTarget {
     } finally { this.playPending--; }
   }
   private send(command: PlaybackCommand): Promise<void> {
-    if (this.publicListener) return Promise.reject(new Error("Public listeners cannot control playback"));
+    if (this.publicListener || this.readOnly) return Promise.reject(new Error("Public listeners cannot control playback"));
     const mine = this.epoch;
     const result = this.serial.then(async () => {
       if (mine !== this.epoch) return;
@@ -307,7 +307,7 @@ export class MoqPlayer extends EventTarget {
     this.dispatchEvent(new CustomEvent("state", { detail: status.state === "buffering" ? "loading" : status.state }));
     this.dispatchEvent(new CustomEvent("status", { detail: status }));
     const failure = `${status.instanceId}:${status.generation}`;
-    if (!this.publicListener && status.state === "error" && status.errorCode === "spotify_unavailable" && status.trackId !== null && this.unavailable !== failure) {
+    if (!this.publicListener && !this.readOnly && status.state === "error" && status.errorCode === "spotify_unavailable" && status.trackId !== null && this.unavailable !== failure) {
       this.unavailable = failure;
       this.dispatchEvent(new CustomEvent("unavailable", { detail: { trackId: status.trackId, error: status.error } }));
     }
@@ -317,6 +317,8 @@ export class MoqPlayer extends EventTarget {
   stop() { void this.send({ type: "stop" }).catch(() => {}); }
   async seek(position: number) { await this.send({ type: "seek", position }); }
   setParams(params: Partial<DspParams>) { this.params = { ...this.params, ...params }; if (this.watch) void this.send({ type: "params", params }).catch(() => {}); }
+  /** Controls also work before this browser has opened an audio subscription. */
+  controlParams(params: Partial<DspParams>) { this.params = { ...this.params, ...params }; void this.send({ type: "params", params }).catch(() => {}); }
   setVolume(volume: number) { this.setParams({ volume }); }
   dispose(resetBackoff = true) {
     this.epoch++; clearInterval(this.polling); clearInterval(this.monitoring); clearTimeout(this.rearming); clearTimeout(this.underrun); this.underrun = undefined; clearTimeout(this.renewal); clearTimeout(this.retry); this.retry = undefined;

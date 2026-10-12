@@ -1,7 +1,7 @@
 // Copyright 2026 Sean McNamara
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test, mock } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import type { Track } from "@jmmp/shared";
 import {
@@ -10,6 +10,9 @@ import {
   usePlayerStore,
 } from "../stores/player";
 import { useSourcesStore } from "../stores/sources";
+import { useSessionStore } from "../stores/session";
+import { DEFAULT_USER_SETTINGS } from "@jmmp/shared";
+import { tabLock } from "../tabs/tab-lock";
 import { useQueueStore } from "../stores/queue";
 import { UnavailableTrackError } from "../audio/playback-error";
 import type { PlayerState } from "../audio/pipeline";
@@ -54,6 +57,7 @@ let restorePlayer: (() => void) | null = null;
 let restoreWakeLock: (() => void) | null = null;
 
 afterEach(() => {
+  mock.restore();
   restorePlayer?.();
   restorePlayer = null;
   restoreWakeLock?.();
@@ -63,6 +67,10 @@ afterEach(() => {
 describe("player store", () => {
   test("V25 rejected playback startup becomes a visible, retryable error", async () => {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     restorePlayer = installPlayerBackendForTest(fake);
     const sources = useSourcesStore(); sources.loaded = true; sources.sources = [];
@@ -82,6 +90,10 @@ describe("player store", () => {
   });
   test("starting any track immediately resets the displayed position", async () => {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     restorePlayer = installPlayerBackendForTest(fake);
 
@@ -120,6 +132,10 @@ describe("player store", () => {
 
   test("holds the playback wake lock only while playing", () => {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     const wakeLock = new FakeWakeLockController();
     restorePlayer = installPlayerBackendForTest(fake);
@@ -138,6 +154,10 @@ describe("player store", () => {
 
   test("toggle pauses and resumes an active current track", async () => {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     restorePlayer = installPlayerBackendForTest(fake);
     const player = usePlayerStore();
@@ -156,6 +176,10 @@ describe("player store", () => {
 
   test("toggle replays the current track after playback ends or errors", async () => {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     restorePlayer = installPlayerBackendForTest(fake);
     const sources = useSourcesStore();
@@ -177,6 +201,10 @@ describe("player store", () => {
 
   test("toggle is inert without a current track or while loading", async () => {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     restorePlayer = installPlayerBackendForTest(fake);
     const player = usePlayerStore();
@@ -208,6 +236,10 @@ const track: Track = {
 describe("V28 Spotify unavailable skipping", () => {
   function setup(ids: number[]) {
     setActivePinia(createPinia());
+    const session = useSessionStore();
+    session.hasFullSession = true;
+    session.me = { deviceId: "test", passkeyId: 1, role: "admin", moqEnabled: false, streamUrl: null, isPlayer: true, playerConflict: null, settings: structuredClone(DEFAULT_USER_SETTINGS) };
+    spyOn(tabLock, "takeControl").mockResolvedValue(undefined);
     const fake = new FakePlayerBackend();
     restorePlayer = installPlayerBackendForTest(fake);
     useSourcesStore().loaded = true;

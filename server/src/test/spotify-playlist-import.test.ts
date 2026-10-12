@@ -8,7 +8,7 @@ import type { Playlist, PlaylistWithTracks, ScanEvent, SourceConfig, Track } fro
 import { initDb } from "../db.ts";
 import { encryptJson, loadOrInitMachineKey } from "../crypto.ts";
 import { dispatch, type AppCtx } from "../router.ts";
-import { mintSession } from "../session.ts";
+import { mintTestSession as mintSession } from "./session-fixture.ts";
 import * as spotify from "../sources/spotify.ts";
 import { getScanProgress, runScan } from "../scan/worker.ts";
 import { spotifyPlaylistUri } from "../spotify-playlist-import.ts";

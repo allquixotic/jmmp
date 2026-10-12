@@ -237,7 +237,7 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
         unavailablePending = false;
         simulated = { ...simulated, state: "error", error: stack, errorCode: "spotify_unavailable", generation: simulated.generation + 1, revision: simulated.revision + 1 };
       }
-      return route.fulfill({ json: { ok: true, data: simulated } });
+      return route.fulfill({ json: { ok: true, data: { ...simulated, nowPlaying: null, currentTrack: playlistTracks.find(t => t.id === simulated.trackId) ?? null } } });
     });
     await page.goto(fixture.url + "/library/songs");
     await page.getByRole("button", { name: "Play Unavailable fixture", exact: true }).click();
@@ -259,7 +259,7 @@ test("built jmmp uploads audio, tests the relay, and plays ordinary Opus subscri
     expect(disabled.settings.enabled).toBe(false); expect(disabled.running).toBe(false);
     // Startup failures must be visible on the ordinary player's page, including
     // the compact transport. A failure must not become an unhandled click error.
-    await page.route("**/api/moq", route => route.fulfill({status:503,contentType:"application/json",
+    await page.route("**/api/playback/output", route => route.fulfill({status:503,contentType:"application/json",
       body:JSON.stringify({ok:false,error:"Playback service unavailable"})}));
     await page.getByRole("button", { name: /Play Tone|Play tone|Play Untitled/ }).first().click();
     await expect(page.getByRole("alert")).toContainText("Playback service unavailable");

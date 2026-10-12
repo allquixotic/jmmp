@@ -23,7 +23,8 @@ const cfg = { listen: { host: "127.0.0.1", port }, tailscaleAuto: false, dataDir
   webauthn: { rpId: "localhost", rpName: "jmmp test", origin: url } };
 Object.assign(cfg, { publicListener: { host: "127.0.0.1", port: publicPort, origin: "https://radio.example.com" } });
 const db = initDb(dir), machineKey = await loadOrInitMachineKey(dir);
-const { token } = await mintSession({ cfg, db, machineKey } as AppCtx, "browser-owner", "full");
+db.run("INSERT INTO passkeys(credential_id,public_key) VALUES (?,?)", [Buffer.from("browser-owner"), new Uint8Array([1])]);
+const { token } = await mintSession({ cfg, db, machineKey } as AppCtx, "browser-owner", "full", 1);
 db.run("UPDATE session_devices SET is_player = 1 WHERE id = 'browser-owner'");
 db.run("INSERT INTO sources (kind, name, config_json, cache_policy) VALUES ('local', 'Uploaded music', '{}', 'all')");
 db.close();
