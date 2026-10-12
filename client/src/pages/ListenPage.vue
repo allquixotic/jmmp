@@ -14,10 +14,11 @@
         <p v-else>{{ loadingTrack ? 'Loading current track…' : 'Nothing playing right now.' }}</p>
       </section>
       <q-btn color="primary" :disable="resyncing" :label="listening ? 'Disconnect' : 'Listen'" @click="toggle" />
+      <q-btn v-if="listening && locallyPaused" class="q-ml-sm" outline color="primary" label="Resume listening" @click="resumeListening" />
       <q-btn v-if="listening" class="q-ml-sm" outline color="primary" label="Resync" :loading="resyncing" @click="resync">
         <q-tooltip>Reset learned buffer and reconnect</q-tooltip>
       </q-btn>
-      <p class="q-mt-md">{{ state }}</p>
+      <p class="q-mt-md">{{ locallyPaused && listening ? 'Listening paused on this device' : state }}</p>
       <p v-if="listening" role="status">{{ transport }}<span v-if="audio"> · {{ audio }}</span></p>
       <p v-if="listening && latency" aria-label="Adaptive playback buffer" class="text-grey">
         Adaptive buffer: {{ Math.round(latency.playoutMs) }} ms
@@ -30,13 +31,14 @@
   </q-layout>
 </template>
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watchEffect } from "vue";
 import { useRoute } from "vue-router";
 import type { ListenerPlaybackStatus, NowPlayingTrack } from "@jmmp/shared";
 import { api } from "src/api";
 import { MoqPlayer } from "src/audio/moq";
 import type { ListenerLatency } from "src/audio/adaptive-latency";
 import PageHero from "src/components/PageHero.vue";
+import { PlaybackMediaSession } from "src/audio/media-session";
 const listening = ref(false), state = ref(""), error = ref("");
 const resyncing = ref(false);
 const transport = ref("Connecting"), audio = ref("");
@@ -61,9 +63,22 @@ async function refreshTrack() {
 }
 onMounted(() => { void refreshTrack(); polling = setInterval(() => void refreshTrack(), 1000); });
 const player = new MoqPlayer(publicListener, true);
+const locallyPaused = ref(false), broadcastPlaying = ref(false);
+const mediaSession = new PlaybackMediaSession();
+watchEffect(() => {
+  mediaSession.update(listening.value && nowPlaying.value ? {
+    title: nowPlaying.value.title ?? "Untitled track", artist: nowPlaying.value.artist ?? "Unknown artist",
+  } : null, listening.value ? !locallyPaused.value && broadcastPlaying.value ? "playing" : "paused" : "none", listening.value ? {
+    play: resumeListening,
+    pause: () => { locallyPaused.value = true; player.setListenerPaused(true); },
+    stop: () => { if (listening.value) void toggle(); },
+  } : {});
+});
+function resumeListening() { if (listening.value) { locallyPaused.value = false; player.setListenerPaused(false); } }
 player.addEventListener("error", e => { error.value = (e as CustomEvent).detail; });
 player.addEventListener("state", e => {
   const next = (e as CustomEvent<string>).detail;
+  broadcastPlaying.value = next === "playing";
   state.value = ({ idle: "Waiting for next track…", ended: "Waiting for next track…", loading: "Waiting for audio…",
     paused: "Playback paused", playing: "Listening", error: "Waiting for broadcast to recover…" } as Record<string, string>)[next] ?? next;
 });
@@ -76,7 +91,7 @@ player.addEventListener("audio", e => { audio.value = (e as CustomEvent).detail;
 player.addEventListener("latency", e => { latency.value = (e as CustomEvent<ListenerLatency>).detail; });
 async function toggle() {
   if (listening.value) { player.dispose(); listening.value = false; state.value = "Disconnected"; audio.value = ""; transport.value = "Connecting"; latency.value = null; void refreshTrack(); return; }
-  error.value = "";
+  error.value = ""; locallyPaused.value = false; player.setListenerPaused(false);
   try { await player.listen(); listening.value = true; } catch (e) { error.value = String(e); }
 }
 async function resync() {
@@ -84,5 +99,5 @@ async function resync() {
   resyncing.value = true; transport.value = "Connecting"; audio.value = "";
   try { await player.resync(); } finally { resyncing.value = false; }
 }
-onUnmounted(() => { active = false; clearInterval(polling); pending?.abort(); player.dispose(); });
+onUnmounted(() => { active = false; mediaSession.dispose(); clearInterval(polling); pending?.abort(); player.dispose(); });
 </script>

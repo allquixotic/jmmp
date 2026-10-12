@@ -446,3 +446,23 @@ header to hide it, restore another column, or reset the layout. Widths and
 visibility restore from localStorage on startup, including playlist and search
 **Columns** menus. At least one data column stays visible. Preferences belong to
 this browser and do not change another listener's layout.
+
+### iPhone and background listening
+
+Both browser audio paths request the **playback** Audio Session when the browser
+supports it. Start playback/Listen with a tap before locking the screen. Current
+track metadata is sent to the OS Media Session. The controller's lock-screen
+play/pause, stop, seek and queue controls require the currently authorized owner;
+public and observer listening pages only pause/resume or disconnect their own
+receiver. They never pause the broadcast or expose seek/skip controls.
+
+MoQ uses a temporary, bounded 1.5-second minimum buffer while hidden and for ten
+seconds after returning. This reserve absorbs ordinary background scheduling
+delays without overwriting the client's learned network buffer. Hidden or late
+timer observations cannot inflate latency or tear down a healthy subscription;
+fresh foreground observations still recover genuinely stalled playback. A
+deliberate local pause remains paused when the page becomes visible.
+
+These web features help Safari keep audio active but cannot override an OS
+decision to suspend the page or transport completely. Screen-lock playback must
+be verified on the target iPhone/iOS version; installing the PWA is optional.

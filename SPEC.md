@@ -75,6 +75,10 @@ V38: Viewers observe without ownership/heartbeat/tab claims or server/shared pla
 V39: MoQ settings, existing source config and passkey/invitation administration require admin; DJs add sources/uploads and CRUD playlists; source/file deletion remains admin; all other role capabilities enforced in API and UI; unclassified API defaults admin.
 V40: Safe playback discovery exposes enabled mode and player page only; sidebar Listen to stream opens configured public player or authenticated /listen in a new tab; no MoQ admin settings query by listeners; passkey labels persist server-side; local view preferences never write viewer playback state.
 V41: Admin invitation creation validates and persists viewer/player/dj/admin role, default admin for omitted role and legacy invitations; recipient UI displays assigned access; atomic consumption assigns the stored role to the credential and first session; recipient payload cannot elevate it; single-use/expiry/revocation preserved.
+V42: Both browser audio paths request the playback Audio Session before audio creation/resume when supported; missing/rejected APIs preserve playback; foreground recovery respects deliberate pause.
+V43: Media Session metadata follows the active track; shared lock-screen controls require a full, currently authorized owner session at invocation; observer/public controls pause/resume/disconnect only their receiver; live listeners expose no shared seek/skip actions; stale/disposed handlers cannot act.
+V44: Hidden/delayed main-thread observations never count as rendered underruns or watchdog failures; finite background playout reserve leaves persisted learning unchanged; foreground starts fresh render evidence and retains automatic recovery for genuine stalls; visibility changes never disconnect healthy audio or resume a deliberately paused receiver.
+V45: MoQ cancellation/recovery observes losing terminal promises even when an earlier race input already settled; subscription failures still reach normal transport diagnostics without uncaught browser rejections.
 
 ## §T TASKS
 id|status|task|cites
@@ -105,6 +109,7 @@ T22|x|listener Resync and pipeline dropout diagnostics; verify, push and deploy|
 
 T23|x|passkey roles/labels, concurrent observers and stream shortcut; verify|V10,V37,V38,V39,V40
 T24|x|select and persist invitation role; verify|V10,V21,V22,V23,V37,V41,I.passkey-invite
+T25|x|web playback audio session, role-aware lock-screen controls and background buffering; verify, push and deploy both hosts|V10,V15,V32,V34,V38,V42,V43,V44,V45,I.playback,I.public,I.build
 
 ## §B BUGS
 id|date|cause|fix
@@ -172,3 +177,8 @@ B58|2026-10-11|Long upload retained permissions from request start after a crede
 B59|2026-10-11|Pitch panels apply default DSP on mount/hydration, claiming shared playback from a newly signed-in controller|Send DSP only from user input; initialize pitch/tempo/speed when deliberately selecting a track; cold-controller browser regression rejects unsolicited parameters (V38)
 B60|2026-10-11|Invitation browser fixture reads text content from a Quasar combobox input|Assert the input value; verify admin default and real viewer enrollment (V10,V41)
 B61|2026-10-11|RBAC scope fixture starts a real relay with empty settings and times out compiling Rust on a fresh host|Use invalid bitrate to reach admin validation without native startup; assert admin 400 versus other roles 403 (V10,V39)
+B62|2026-10-11|Bun spy on Pinia reactive action misses invocation through wrapped action|Assert backend pause effects through the real store/control path (V43)
+B63|2026-10-11|Audio-only Media Session adapter requires unrelated camera/microphone methods from full DOM interface|Type its actual metadata/actions/position surface; strict fixture typecheck (V10,V43)
+B64|2026-10-11|Background browser fixture expects requested delay to equal effective delay, omitting MoQ synchronization RTT margin|Assert effective delay reaches the reserve and saved learning remains unchanged (V44)
+B65|2026-10-11|Cold-controller browser fixture presses OS play before authoritative pause observation reaches UI|Wait for Media Session paused state before requesting resume (V43)
+B66|2026-10-11|MoQ subscription update completion adopts a rejecting closed promise after short-circuit race already returned|Persist a narrow @moq/net patch observing the losing completion promise; blackhole/reconnect browser test rejects uncaught errors (V45)

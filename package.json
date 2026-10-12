@@ -34,5 +34,8 @@
     "concurrently": "^10.0.6",
     "esbuild": "0.28.2",
     "typescript": "^7.0.2"
+  },
+  "patchedDependencies": {
+    "@moq/net@0.4.2": "patches/@moq%2Fnet@0.4.2.patch"
   }
 }

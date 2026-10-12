@@ -74,12 +74,14 @@ import TransportBar from "src/components/TransportBar.vue";
 import NowPlayingScreen from "src/components/NowPlayingScreen.vue";
 import OfflineBanner from "src/components/OfflineBanner.vue";
 import PitchHUD from "src/components/PitchHUD.vue";
+import { installControllerMediaSession } from "src/interactions/playback-media-session";
 
 const sidebarOpen = ref(true);
 const nowPlayingOpen = ref(false);
 const session = useSessionStore();
 const player = usePlayerStore();
 const router = useRouter();
+const disposeMediaSession = installControllerMediaSession();
 
 onMounted(() => {
   player.startObserving();
@@ -87,6 +89,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposeMediaSession();
   player.stopObserving();
   document.removeEventListener("keydown", onPlaybackKeydown);
 });

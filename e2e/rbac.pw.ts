@@ -6,6 +6,15 @@ import { addVirtualAuthenticator, createVirtualAuthenticator } from "./webauthn"
 import type { MoqOutputStatus, PasskeyListResponse, MeResponse } from "../shared/src/index.ts";
 
 test("V37–V40 passkey label/role editing, ordinary stream shortcut and concurrent passive viewers", async ({ page, context, browser }) => {
+  const recordMediaActions = () => {
+    const handlers = new Map<string, MediaSessionActionHandler | null>();
+    (window as any).__mediaActions = handlers;
+    const original = navigator.mediaSession.setActionHandler;
+    navigator.mediaSession.setActionHandler = function (action, handler) {
+      handlers.set(action, handler); return original.call(this, action, handler);
+    };
+  };
+  await context.addInitScript(recordMediaActions);
   const headers = { "X-jmmp-Client": "1" };
   const originalAuthenticator = await createVirtualAuthenticator(page, context);
   await page.goto("/login");
@@ -33,6 +42,7 @@ test("V37–V40 passkey label/role editing, ordinary stream shortcut and concurr
     expect(result.status()).toBe(201);
     const url = (await result.json()).data.url as string;
     const ctx = await browser.newContext({ baseURL: "http://localhost:9001" }); guests.push(ctx);
+    await ctx.addInitScript(recordMediaActions);
     const guest = await ctx.newPage(); await addVirtualAuthenticator(guest, ctx);
     await guest.goto(url); await guest.getByRole("button", { name: "Add my passkey", exact: true }).click();
     await expect(guest.getByText("Passkey added.", { exact: false })).toBeVisible();
@@ -89,6 +99,7 @@ test("V37–V40 passkey label/role editing, ordinary stream shortcut and concurr
       await guest.goto("/playlists/42");
       await expect(guest.locator(".transport-bar")).toContainText("Observed track");
       await expect(guest.locator(".transport-bar")).toContainText("Observed artist");
+      expect(await guest.evaluate(() => [...(window as any).__mediaActions.values()].every(handler => handler === null))).toBe(true);
       await expect(guest.getByRole("button", { name: "Play", exact: true })).toHaveCount(0);
       await guest.locator(".track-row").dblclick(); await guest.locator(".track-row").click({ button: "right" });
       await expect(guest.getByText("Add to playlist", { exact: true })).toHaveCount(0);
@@ -120,6 +131,12 @@ test("V37–V40 passkey label/role editing, ordinary stream shortcut and concurr
       await expect(guest.locator(".transport-bar")).toContainText("Observed track");
       await guest.locator(".transport-bar .play-btn").click();
       await expect.poll(() => controls).toEqual([{ type: "pause" }]);
+      // The explicit UI action claimed ownership. OS controls now have the
+      // same role/owner guard and use the ordinary server command path.
+      await expect.poll(() => guest.evaluate(() => !!(window as any).__mediaActions.get("play"))).toBe(true);
+      await expect.poll(() => guest.evaluate(() => navigator.mediaSession.playbackState)).toBe("paused");
+      await guest.evaluate(() => (window as any).__mediaActions.get("play")({ action: "play" }));
+      await expect.poll(() => controls).toEqual([{ type: "pause" }, { type: "resume" }]);
       expect(((await (await guest.request.get("/api/me")).json()).data as MeResponse).isPlayer).toBe(true);
       expect(((await (await page.request.get("/api/me")).json()).data as MeResponse).isPlayer).toBe(false);
     } finally { await page.request.put("/api/moq", { headers, data: output.settings }); }

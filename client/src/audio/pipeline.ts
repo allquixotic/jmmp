@@ -4,6 +4,7 @@
 import type { CachePolicy, Track } from "@jmmp/shared";
 import { UnavailableTrackError, playbackErrorText } from "./playback-error";
 import { SoundTouchNode } from "./soundtouch-node";
+import { requestPlaybackAudioSession } from "./audio-session";
 import { createDecoder, type DecodedChunk, type StreamingDecoder } from "./decoders";
 import { planSeek } from "./seek";
 import { evictLruIfOver, getCachedFile, storeStream } from "src/storage/opfs-cache";
@@ -62,8 +63,19 @@ export class AudioPlayer extends EventTarget {
   private contextTimeAtStart = 0;
   private positionInterval: ReturnType<typeof setInterval> | null = null;
   private playbackGeneration = 0;
+  private foregroundListening = false;
+  private readonly recoverForegroundAudio = () => {
+    const ctx = this.audioContext;
+    if (document.visibilityState !== "visible" || !ctx || !["playing", "loading"].includes(this.state) || ctx.state === "running" || ctx.state === "closed") return;
+    requestPlaybackAudioSession();
+    void ctx.resume().catch(error => this.dispatchEvent(new CustomEvent("error", { detail: playbackErrorText(error) })));
+  };
 
   async ensureContext(): Promise<void> {
+    requestPlaybackAudioSession();
+    if (!this.foregroundListening && typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.recoverForegroundAudio); this.foregroundListening = true;
+    }
     if (this.audioContext) return;
     this.audioContext = new AudioContext({ latencyHint: "interactive" });
     this.soundTouch = await SoundTouchNode.create(this.audioContext);
@@ -107,7 +119,7 @@ export class AudioPlayer extends EventTarget {
     this.setState("loading");
     const ctx = this.audioContext!;
     const soundTouch = this.soundTouch!;
-    if (ctx.state === "suspended") await ctx.resume();
+    if (ctx.state !== "running") { requestPlaybackAudioSession(); await ctx.resume(); }
     await soundTouch.resetAndWait();
     if (generation !== this.playbackGeneration) return;
 
@@ -206,11 +218,13 @@ export class AudioPlayer extends EventTarget {
 
   resume(): void {
     if (!this.audioContext || this.state !== "paused") return;
+    requestPlaybackAudioSession();
     void this.audioContext.resume();
     this.setState("playing");
   }
 
   stop(): void {
+    if (this.foregroundListening) { document.removeEventListener("visibilitychange", this.recoverForegroundAudio); this.foregroundListening = false; }
     this.stopPlayback();
     this.currentTrack = null;
     this.duration = 0;

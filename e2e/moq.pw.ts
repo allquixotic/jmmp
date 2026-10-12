@@ -20,6 +20,13 @@ test.afterAll(async () => { if (child && child.exitCode === null) { child.kill()
 async function authenticate(context: BrowserContext, websocket = false, anonymous = false) {
   if (!anonymous) await context.addCookies([{ name: "jmmp_session", value: fixture.token, url: fixture.url }]);
   await context.addInitScript((forceWebSocket) => {
+    Object.defineProperty(navigator, "audioSession", { configurable: true, value: { type: "auto" } });
+    const mediaHandlers = new Map<string, MediaSessionActionHandler | null>();
+    (window as any).__moqMediaHandlers = mediaHandlers;
+    const setAction = navigator.mediaSession.setActionHandler;
+    navigator.mediaSession.setActionHandler = function (action, handler) {
+      mediaHandlers.set(action, handler); return setAction.call(this, action, handler);
+    };
     if (forceWebSocket) Object.defineProperty(window, "WebTransport", { value: undefined });
     // Observe actual WebCodecs output, rather than treating catalog receipt as audio.
     const counters = { frames: 0, audible: false, opus: false, webtransport: false, rendered: 0, frequency: 0, silentTicks: 0, underruns: 0, bufferPath: "" };
@@ -43,7 +50,10 @@ async function authenticate(context: BrowserContext, websocket = false, anonymou
     (window as any).__moqContexts = contexts;
     const NativeContext = window.AudioContext;
     window.AudioContext = class extends NativeContext {
-      constructor(options?: AudioContextOptions) { super(options); contexts.push(this); }
+      constructor(options?: AudioContextOptions) {
+        if ((navigator as any).audioSession.type !== "playback") throw new Error("Audio created without playback session");
+        super(options); contexts.push(this);
+      }
     };
     const NativeWorklet = window.AudioWorkletNode;
     window.AudioWorkletNode = class extends NativeWorklet {
@@ -455,4 +465,79 @@ test("V33/V34/V35 restored buffers recover from blackholes and Resync rebuilds a
     }))), null, 2), contentType: "application/json" });
     await Promise.all(clients.map(receiver => receiver.ctx.close()));
   }
+});
+
+test("V42–V44 public lock-screen controls stay local and background scheduling preserves the learned buffer", async ({ page, context, browser }) => {
+  test.setTimeout(60000);
+  await authenticate(context);
+  const headers = { "X-jmmp-Client": "1" };
+  const upload = await page.request.post(fixture.url + "/api/sources/1/upload?path=background.flac",
+    { headers, data: await readFile(resolve("server/src/test/fixtures/continuity-one.flac")) });
+  expect(upload.ok()).toBe(true);
+  const metadata = (await upload.json()).data.track;
+  expect((await page.request.post(fixture.url + "/api/catalog/upload", { headers, data: { sourceId: 1, tracks: [metadata] } })).ok()).toBe(true);
+  const tracks = (await (await page.request.get(fixture.url + "/api/catalog/tracks?source=1")).json()).data.tracks as Track[];
+  const song = tracks.find(track => track.sourceTrackId === metadata.sourceTrackId)!;
+  const settings = (await (await page.request.get(fixture.url + "/api/moq")).json()).data.settings;
+  expect((await page.request.put(fixture.url + "/api/moq", { headers, data: { ...settings, enabled: true, publicListening: true,
+    port: fixture.relayPort, publicUrl: `http://localhost:${fixture.relayPort}`, websocketUrl: fixture.publicUrl.replace("http:", "ws:") + "/moq" } })).ok()).toBe(true);
+  const receiver = await browser.newContext({ serviceWorkers: "block" });
+  await authenticate(receiver, true, true);
+  let credentialRequests = 0;
+  await receiver.route("**/api/public/moq/listener", async route => {
+    const response = await route.fetch(), body = await response.json();
+    credentialRequests++;
+    // Trigger proactive renewal during the hidden interval. The actual relay
+    // token is unchanged; this short expiry tests scheduling rather than auth.
+    body.data.expires = Math.floor(Date.now() / 1000) + 66;
+    await route.fulfill({ response, json: body });
+  });
+  const client = await receiver.newPage(), writes: string[] = [], errors: string[] = [];
+  client.on("request", request => { if (!["GET", "HEAD", "OPTIONS"].includes(request.method())) writes.push(request.url()); });
+  client.on("pageerror", error => errors.push(error.message));
+  try {
+    await client.goto(fixture.publicUrl + "/public-listen");
+    await client.getByRole("button", { name: "Listen", exact: true }).click();
+    expect((await page.request.post(fixture.url + "/api/playback", { headers, data: { command: { type: "play", trackId: song.id,
+      params: { pitchSemi: 0, tempoPct: -50, speedPct: -50, gainDb: 0, volume: 1 } } } })).ok()).toBe(true);
+    await expect.poll(() => client.evaluate(() => (window as any).__moqAudio.rendered)).toBeGreaterThan(5);
+    await expect.poll(() => client.evaluate(() => navigator.mediaSession.metadata?.title)).toBe(song.title);
+    expect(await client.evaluate(() => navigator.mediaSession.metadata?.artist)).toBe(song.artist || "Unknown artist");
+    expect(await client.evaluate(() => ["seekto", "seekforward", "seekbackward", "previoustrack", "nexttrack"].every(action => !(window as any).__moqMediaHandlers.get(action)))).toBe(true);
+    await client.evaluate(() => (window as any).__moqMediaHandlers.get("pause")({ action: "pause" }));
+    await expect(client.getByText("Listening paused on this device", { exact: true })).toBeVisible();
+    await expect.poll(() => client.evaluate(() => navigator.mediaSession.playbackState)).toBe("paused");
+    const before = (await (await page.request.get(fixture.url + "/api/playback")).json()).data as PlaybackStatus;
+    await client.waitForTimeout(1100);
+    const after = (await (await page.request.get(fixture.url + "/api/playback")).json()).data as PlaybackStatus;
+    expect(after.state).toBe("playing"); expect(after.generation).toBe(before.generation); expect(after.position).toBeGreaterThan(before.position);
+    await client.evaluate(() => (window as any).__moqMediaHandlers.get("play")({ action: "play" }));
+    await expect.poll(() => client.evaluate(() => navigator.mediaSession.playbackState)).toBe("playing");
+    const prior = await client.evaluate(key => localStorage.getItem(key), LATENCY_STORAGE_KEY);
+    const contexts = await client.evaluate(() => (window as any).__moqContexts.length);
+    await client.evaluate(() => {
+      (window as any).__hidden = true;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (window as any).__hidden ? "hidden" : "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect.poll(async () => Number(/buffer: (\d+) ms/.exec(await client.getByLabel("Adaptive playback buffer").innerText())?.[1])).toBeGreaterThanOrEqual(1500);
+    await client.waitForTimeout(2200);
+    // Deliberately delay main-thread observations while the real AudioWorklet
+    // drains its scheduling reserve. This is not a network impairment.
+    await client.evaluate(() => { const end = performance.now() + 1200; while (performance.now() < end) {} });
+    await client.waitForTimeout(6500);
+    expect(await client.evaluate(key => localStorage.getItem(key), LATENCY_STORAGE_KEY)).toBe(prior);
+    expect(await client.evaluate(() => (window as any).__moqContexts.length)).toBe(contexts);
+    expect(credentialRequests).toBe(1);
+    const rendered = await client.evaluate(() => (window as any).__moqAudio.rendered);
+    await client.evaluate(() => { (window as any).__hidden = false; document.dispatchEvent(new Event("visibilitychange")); });
+    await expect.poll(() => client.evaluate(() => (window as any).__moqAudio.rendered)).toBeGreaterThan(rendered + 5);
+    await expect.poll(() => credentialRequests).toBeGreaterThan(1);
+    expect(await client.evaluate(key => localStorage.getItem(key), LATENCY_STORAGE_KEY)).toBe(prior);
+    await client.evaluate(() => (window as any).__moqMediaHandlers.get("stop")({ action: "stop" }));
+    await expect(client.getByRole("button", { name: "Listen", exact: true })).toBeVisible();
+    expect(await client.evaluate(() => navigator.mediaSession.metadata)).toBeNull();
+    expect((await (await page.request.get(fixture.url + "/api/playback")).json()).data.state).toBe("playing");
+    expect(writes).toEqual([]); expect(errors).toEqual([]);
+  } finally { await receiver.close(); }
 });

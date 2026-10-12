@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_DSP_PARAMS, type PlaybackStatus } from "@jmmp/shared";
 import { MoqPlayer } from "../audio/moq";
+import { BackgroundPlayout } from "../audio/background-playout";
 
 test("V28 MoQ unavailable events are typed, deduplicated and private to controllers", () => {
   const status: PlaybackStatus = { instanceId: "one", revision: 1, generation: 1, trackId: 7,
@@ -124,5 +125,40 @@ test("V34 one continuous stall raises once and triggers full receiver recovery i
       internals.lastStatus.state = state; internals.monitorMedia();
     }
     expect(recoveries).toBe(1);
+  } finally { backend.dispose(); }
+});
+
+test("V43/V44 local listener pause survives status polls; hidden playheads neither learn nor reconnect", async () => {
+  const backend = new MoqPlayer(true);
+  const internals = backend as unknown as {
+    watch: unknown; netModule: unknown; delay: unknown; paused: unknown; lastStatus: PlaybackStatus;
+    heardAudio: boolean; mediaProgressAt: number; refillUntil: number; background: BackgroundPlayout;
+    latency: { targetMs: number; underruns: number }; monitorMedia(): void; reconnect(): void; apply(status: PlaybackStatus): void;
+  };
+  let requested = 100, paused = false, recoveries = 0, resumes = 0;
+  internals.watch = { audio: { out: { context: { peek: () => ({ state: "running", resume: async () => { resumes++; } }) }, stalled: { peek: () => false }, timestamp: { peek: () => 100 } } },
+    sync: { out: { delay: { peek: () => requested } } }, close() {} };
+  internals.netModule = { Time: { Milli: (value: number) => value } };
+  internals.delay = { peek: () => requested, set: (value: number) => { requested = value; } };
+  internals.paused = { set: (value: boolean) => { paused = value; } };
+  internals.reconnect = () => { recoveries++; };
+  const status: PlaybackStatus = { instanceId: "one", revision: 1, generation: 1, trackId: null,
+    position: 0, duration: 100, state: "playing", params: DEFAULT_DSP_PARAMS, error: null };
+  internals.apply(status);
+  try {
+    backend.setListenerPaused(true); internals.apply({ ...status, revision: 2 });
+    expect(paused).toBe(true); expect(resumes).toBe(0);
+    internals.background.visibility(true, performance.now());
+    internals.heardAudio = true; internals.refillUntil = 0; internals.mediaProgressAt = performance.now() - 30000;
+    internals.monitorMedia();
+    expect(requested).toBe(1500);
+    backend.setListenerPaused(false);
+    expect(paused).toBe(false); expect(resumes).toBe(1);
+    internals.heardAudio = true; internals.refillUntil = 0; internals.mediaProgressAt = performance.now() - 30000;
+    internals.monitorMedia(); await Bun.sleep(550);
+    expect(internals.latency.targetMs).toBe(100); expect(internals.latency.underruns).toBe(0); expect(recoveries).toBe(0);
+    internals.background.visibility(false, performance.now());
+    internals.monitorMedia(); // Stale foreground timestamp is not a 30-second speaker gap.
+    expect(recoveries).toBe(0);
   } finally { backend.dispose(); }
 });
