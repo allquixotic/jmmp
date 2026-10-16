@@ -50,3 +50,17 @@ test("V36 native stdout remains drained past ready; chunks and hostile diagnosti
   expect(events[0]?.packetsLost).toBe(3);
   expect(JSON.stringify(events)).not.toContain("secret");
 });
+
+test("V49 source retry diagnostics accept only bounded fields and known reasons", async () => {
+  const events: PipelineDiagnostic[] = [];
+  const stream = new Response([
+    { event: "diagnostic", stage: "source_server", phase: "source_read", eventType: "retry", reason: "timeout", attempt: 1, offset: 23527257, url: "https://private/token" },
+    { event: "diagnostic", stage: "source_server", phase: "source_read", eventType: "failed", reason: "https://private/token", attempt: -1, offset: "private-token" },
+  ].map(event => JSON.stringify(event)).join("\n") + "\n").body!;
+  await readHelperEvents(stream, () => {}, event => events.push(event));
+  expect(events).toEqual([
+    { stage: "source_server", phase: "source_read", event: "retry", reason: "timeout", attempt: 1, offset: 23527257 },
+    { stage: "source_server", phase: "source_read", event: "failed" },
+  ]);
+  expect(JSON.stringify(events)).not.toContain("private");
+});

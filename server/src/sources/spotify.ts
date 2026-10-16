@@ -5,6 +5,7 @@ import type { SourceConfig, SourceSecrets, Track, ByteRange } from "@jmmp/shared
 import { dirname } from "node:path";
 import { decryptJson, encryptJson } from "../crypto.ts";
 import { audioAssets } from "../audio/runtime.ts";
+import { logPipeline, readHelperEvents, type PipelineDiagnostic } from "../audio/diagnostics.ts";
 import type { ServerSourceAdapter } from "./types.ts";
 
 type Config = Extract<SourceConfig, { kind: "spotify" }>;
@@ -85,10 +86,31 @@ export class SpotifyPipe {
   private reader: ReadableStreamDefaultReader<Uint8Array>;
   private buffered = new Uint8Array(0);
   private heartbeat: ReturnType<typeof setInterval>;
-  constructor(private process: Bun.Subprocess<"pipe", "pipe", "ignore">) {
+  private diagnostics: Promise<void>;
+  private failure: PipelineDiagnostic | undefined;
+  constructor(private process: Bun.Subprocess<"pipe", "pipe", "pipe" | "ignore">,
+    report: (event: PipelineDiagnostic) => void = () => {}) {
     this.reader = process.stdout.getReader();
-    this.heartbeat = setInterval(() => { try { process.stdin.write("\n"); } catch { clearInterval(this.heartbeat); } }, 2000);
+    this.diagnostics = process.stderr ? readHelperEvents(process.stderr, () => {}, event => {
+      this.failure = { ...this.failure, ...event }; report(event);
+    }).catch(() => {}) : Promise.resolve();
+    this.heartbeat = setInterval(() => {
+      try {
+        process.stdin.write("\n");
+        void Promise.resolve(process.stdin.flush()).catch(() => clearInterval(this.heartbeat));
+      } catch { clearInterval(this.heartbeat); }
+    }, 2000);
     void process.exited.finally(() => clearInterval(this.heartbeat));
+  }
+  private async downloadError(): Promise<SpotifySourceError> {
+    const code = await this.process.exited;
+    await this.diagnostics;
+    const error = new SpotifySourceError("download");
+    const details = [`helper exit ${code}`];
+    if (this.failure?.reason) details.push(String(this.failure.reason));
+    if (typeof this.failure?.attempt === "number") details.push(`${this.failure.attempt} recovery attempts`);
+    error.message += ` (${details.join("; ")})`;
+    return error;
   }
   async line(): Promise<unknown | null> {
     while (true) {
@@ -113,7 +135,7 @@ export class SpotifyPipe {
         try {
           if (this.buffered.length) { controller.enqueue(this.buffered); this.buffered = new Uint8Array(0); return; }
           const next = await this.reader.read();
-          if (next.done) { if (await this.process.exited) throw new Error("Spotify audio download failed"); controller.close(); }
+          if (next.done) { if (await this.process.exited) throw await this.downloadError(); controller.close(); }
           else controller.enqueue(next.value);
         } catch (error) { this.close(); controller.error(error); }
       }, cancel: () => this.close(),
@@ -124,9 +146,9 @@ export function makeSpotifyAdapter(db: Database, key: CryptoKey, sourceId: numbe
   async function open(operation: "metadata" | "stream" | "search", extras: Record<string, unknown>) {
     const accessToken = await spotifyAccessToken(db, key, sourceId, config);
     const { helper } = await audioAssets(dataDir);
-    const child = Bun.spawn([helper, "--spotify"], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    const child = Bun.spawn([helper, "--spotify"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     child.stdin.write(JSON.stringify({ operation, clientId: config.clientId, accessToken, ...extras }) + "\n");
-    return new SpotifyPipe(child);
+    return new SpotifyPipe(child, event => logPipeline({ ...event, sourceId }));
   }
   return {
     async *scan(ctx) {

@@ -29,6 +29,11 @@ if (request.operation !== 'stream') process.exit(1);
 if (request.uri === 'spotify:track:6sWHDYs0csV6RS48xBl0tH') {
   console.log(JSON.stringify({kind:'error',code:'unavailable',message:'private-credential'}));process.exit(1);
 }
+if (request.uri === 'spotify:track:8sWHDYs0csV6RS48xBl0tH') {
+  console.log(JSON.stringify({status:200,size:100,start:0,end:99}));
+  console.error(JSON.stringify({event:'diagnostic',stage:'source_server',phase:'source_read',eventType:'failed',reason:'timeout',attempt:3}));
+  process.exit(1);
+}
 const slow = request.uri === 'spotify:track:7sWHDYs0csV6RS48xBl0tH';
 const bytes = Buffer.from(slow ? ${JSON.stringify(slowFixture)} : ${JSON.stringify(fixture)}, 'base64');
 const header = Buffer.from(JSON.stringify({status:200,size:bytes.length,start:0,end:bytes.length-1})+'\\n');
@@ -47,6 +52,7 @@ if (slow) {
     db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:5sWHDYs0csV6RS48xBl0tH','Fixture','flac',1000)");
     db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:6sWHDYs0csV6RS48xBl0tH','Unavailable','flac',1000)");
     db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:7sWHDYs0csV6RS48xBl0tH','Delayed source','flac',12000)");
+    db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:8sWHDYs0csV6RS48xBl0tH','Timed out source','flac',12000)");
     let frames = 0, peak = 0;
     let timer: ReturnType<typeof setTimeout>;
     try {
@@ -106,6 +112,19 @@ if (slow) {
     expect(diagnostics.some(d => d.stage === "source_server" && d.phase === "source_read" && d.event === "gap" && Number(d.gapMs) > 100)).toBe(true);
     expect(diagnostics.some(d => d.phase === "source_read" && d.startup === true && d.event === "gap")).toBe(true);
     expect(diagnostics.every(d => d.generation === 3 && d.trackId === 3 && d.sourceId === 1)).toBe(true);
+    const interrupted = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Worker did not report the download timeout")), 4000);
+      worker!.onmessage = event => {
+        if (event.data.type === "error" && event.data.generation === 4) {
+          clearTimeout(timeout); expect(event.data.errorCode).toBeUndefined(); resolve(event.data.error);
+        }
+        if (event.data.type === "pcm") worker!.postMessage({type:"ack"});
+      };
+      worker!.postMessage({type:"start",dataDir,trackId:4,generation:4,position:0,paused:false,params:DEFAULT_DSP_PARAMS});
+    });
+    expect(interrupted).toContain("Spotify audio download failed");
+    expect(interrupted).toContain("timeout; 3 recovery attempts");
+    expect(interrupted).toContain("audio-worker.js:");
   } finally {
     worker?.terminate(); db.close();
     await rm(dataDir, {recursive:true,force:true});

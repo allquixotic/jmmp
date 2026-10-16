@@ -15,6 +15,8 @@ import "../routes/index.ts";
 import { spotifyRedirectUri } from "../routes/spotify.ts";
 import * as scanWorker from "../scan/worker.ts";
 import { createHash } from "node:crypto";
+import type { PipelineDiagnostic } from "../audio/diagnostics.ts";
+import { errorText } from "@jmmp/shared/error-format";
 
 const uri="spotify:track:5sWHDYs0csV6RS48xBl0tH";
 test("Spotify callbacks use the configured HTTPS origin behind TLS offload", () => {
@@ -173,6 +175,28 @@ test("Spotify pipe rejects failed downloads instead of treating truncation as EO
   const child=Bun.spawn([process.execPath,"-e",'process.stdout.write("{}\\n");process.exit(1)'],{stdin:"pipe",stdout:"pipe",stderr:"ignore"});
   const pipe=new SpotifyPipe(child);child.stdin.end();
   try{await pipe.line();await expect(new Response(pipe.audio()).arrayBuffer()).rejects.toThrow("Spotify audio download failed");}finally{pipe.close();}
+});
+test("V49 Spotify drains stderr and retains safe timeout details without treating downloads as unavailable", async () => {
+  const child = Bun.spawn([process.execPath, "-e", `
+    process.stdout.write('{}\\n');
+    process.stderr.write('private-access https://private/token\\n');
+    process.stderr.write('x'.repeat(100000)+'\\n');
+    process.stderr.write(JSON.stringify({event:'diagnostic',stage:'source_server',phase:'source_read',eventType:'retry',reason:'timeout',attempt:3,offset:23527257})+'\\n');
+    process.stderr.write(JSON.stringify({event:'diagnostic',stage:'source_server',phase:'source_read',eventType:'failed',reason:'timeout',url:'https://private/token'})+'\\n');
+    process.exit(1);
+  `], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const events: PipelineDiagnostic[] = [], pipe = new SpotifyPipe(child, event => events.push(event));
+  try {
+    await pipe.line();
+    let failure: unknown;
+    try { await new Response(pipe.audio()).arrayBuffer(); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(SpotifySourceError);
+    expect((failure as SpotifySourceError).code).toBe("download");
+    expect(errorText(failure)).toContain("helper exit 1; timeout; 3 recovery attempts");
+    expect(errorText(failure)).toContain("spotify.ts:");
+    expect(events.map(event => event.event)).toEqual(["retry", "failed"]);
+    expect(JSON.stringify(events) + errorText(failure)).not.toContain("private");
+  } finally { pipe.close(); await child.exited; }
 });
 test("V19 Spotify native errors are mapped to fixed messages rather than raw diagnostics",async()=>{
   for (const code of ["login", "playlist", "unavailable", "audio_key", "download", "timeout", "unknown-secret-https://secret.example"]) {

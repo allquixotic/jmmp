@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 mod diagnostics;
 mod runtime;
 mod spotify;
+mod spotify_stream;
 mod upstream;
 
 #[derive(Deserialize)]

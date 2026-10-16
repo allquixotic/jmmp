@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Server-only Spotify source. Credentials arrive on stdin; stdout is a bounded pipe.
 use anyhow::{Context, bail, ensure};
-use librespot_audio::{AudioDecrypt, AudioFile};
+use librespot_audio::{AudioDecrypt, AudioFile, StreamLoaderController};
 use librespot_core::{
     FileId, Session, SpotifyId, SpotifyUri, authentication::Credentials, config::SessionConfig,
 };
@@ -138,6 +138,38 @@ fn byte_range(size: u64, range: Option<Range>) -> anyhow::Result<(u64, u64, u16)
     );
     Ok((range.start, end, 206))
 }
+struct DownloadReader {
+    audio: AudioDecrypt<AudioFile>,
+    controller: StreamLoaderController,
+}
+impl DownloadReader {
+    fn new(
+        file: AudioFile,
+        key: librespot_core::audio_key::AudioKey,
+        offset: u64,
+    ) -> std::io::Result<Self> {
+        let controller = file
+            .get_stream_loader_controller()
+            .map_err(std::io::Error::other)?;
+        let mut reader = Self {
+            audio: AudioDecrypt::new(Some(key), file),
+            controller,
+        };
+        reader.audio.seek(SeekFrom::Start(HEADER + offset))?;
+        Ok(reader)
+    }
+}
+impl Read for DownloadReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        self.audio.read(output)
+    }
+}
+impl Drop for DownloadReader {
+    fn drop(&mut self) {
+        self.controller.close();
+    }
+}
+
 pub async fn run() -> anyhow::Result<()> {
     let mut input = BufReader::new(std::io::stdin());
     let mut line = String::new();
@@ -166,11 +198,23 @@ pub async fn run() -> anyhow::Result<()> {
     });
     let mut audio_started = false;
     let result = execute(request, &mut audio_started).await;
-    if !audio_started && let Err(error) = &result {
-        // Never send raw upstream errors, URLs or account credentials to Bun.
-        // Before an audio header, stream failures use the same bounded protocol
-        // as metadata. Once binary audio starts, failures use only the exit code.
-        let _ = emit(&json!({"kind":"error","code":error_code(error)}));
+    if let Err(error) = &result {
+        if audio_started {
+            let reason = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .map(crate::spotify_stream::reason)
+                .unwrap_or("read_failed");
+            eprintln!(
+                "{}",
+                json!({"event":"diagnostic", "stage":"source_server", "phase":"source_read", "eventType":"failed", "reason":reason})
+            );
+        } else {
+            // Never send raw upstream errors, URLs or account credentials to Bun.
+            // Before an audio header, stream failures use the same bounded protocol
+            // as metadata. After the audio header, diagnostics use stderr only.
+            let _ = emit(&json!({"kind":"error","code":error_code(error)}));
+        }
     }
     result
 }
@@ -322,7 +366,7 @@ async fn execute(request: Request, audio_started: &mut bool) -> anyhow::Result<(
             "Spotify track required"
         );
         let lookup_session = &session;
-        let (id, format, file) = tokio::time::timeout(
+        let (id, format, file_id) = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             resolve_audio_track(uri, |uri| async move {
                 AudioItem::get_file(lookup_session, uri)
@@ -339,10 +383,10 @@ async fn execute(request: Request, audio_started: &mut bool) -> anyhow::Result<(
         };
         let key = session
             .audio_key()
-            .request(id, file)
+            .request(id, file_id)
             .await
             .context("Spotify audio key request failed")?;
-        let file = AudioFile::open(&session, file, rate)
+        let file = AudioFile::open(&session, file_id, rate)
             .await
             .context("Spotify audio download failed")?;
         let controller = file.get_stream_loader_controller()?;
@@ -351,22 +395,42 @@ async fn execute(request: Request, audio_started: &mut bool) -> anyhow::Result<(
             .context("Invalid Spotify audio size")?;
         let (start, end, status) = byte_range(size, request.range)?;
         *audio_started = true;
+        drop(controller);
+        let reader = DownloadReader::new(file, key, start)?;
+        let resume_session = session.clone();
+        let runtime = tokio::runtime::Handle::current();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let mut audio = AudioDecrypt::new(Some(key), file);
-            audio.seek(SeekFrom::Start(HEADER + start))?;
             emit(&json!({"size":size,"start":start,"end":end,"status":status}))?;
-            let copied = std::io::copy(
-                &mut audio.take(end - start + 1),
+            crate::spotify_stream::copy(
+                reader,
+                |offset| {
+                    // Pin the original file/key. Reopening refreshes its CDN URL and
+                    // missing-range state; no second reader or metadata relink race.
+                    let file = runtime.block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(20),
+                            AudioFile::open(&resume_session, file_id, rate),
+                        ).await
+                    })
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Spotify audio reopen timed out"))?
+                    .map_err(std::io::Error::other)?;
+                    let controller = file.get_stream_loader_controller().map_err(std::io::Error::other)?;
+                    if controller.len() as u64 != size + HEADER {
+                        controller.close();
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Spotify audio file size changed"));
+                    }
+                    DownloadReader::new(file, key, offset)
+                },
                 &mut std::io::stdout().lock(),
-            )?;
-            controller.close();
-            ensure!(
-                copied == end - start + 1,
-                "Spotify audio download truncated"
-            );
+                start,
+                end - start + 1,
+                &crate::spotify_stream::RETRY_DELAYS,
+                |event, attempt, offset, reason| {
+                    eprintln!("{}", json!({"event":"diagnostic", "stage":"source_server", "phase":"source_read", "eventType":event,"attempt":attempt,"offset":offset,"reason":reason}));
+                },
+            ).context("Spotify audio download failed")?;
             Ok(())
-        })
-        .await?;
+        }).await?;
         result?;
     }
     session.shutdown();

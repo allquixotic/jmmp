@@ -82,6 +82,8 @@ V45: MoQ cancellation/recovery observes losing terminal promises even when an ea
 
 V46: Managed publisher survives transient upstream outages beyond ten seconds with jittered bounded retry pacing and unchanged broadcast/source pipeline; reconnect restores media delivery; explicit authentication rejection remains terminal and preserves its underlying cause through credential-redacted diagnostics.
 V47: Fatal native failure exits promptly while parent retains an open idle PCM pipe; uncancellable stdin read never delays failure reporting until next playback command.
+V48: Transient Spotify download failure resumes exact byte offset from same pinned file/key after closing prior reader; at most three retries, each reopen bounded twenty seconds; no duplicated bytes, changed-file continuation or retry on cancelled output; unavailable classification unchanged.
+V49: Worker/browser errors retain message and original stack frames even when Bun omits message from stack; native source retries/recovery/failure drain through bounded credential-free diagnostic allowlist and retain safe final cause.
 
 ## §T TASKS
 id|status|task|cites
@@ -115,6 +117,7 @@ T24|x|select and persist invitation role; verify|V10,V21,V22,V23,V37,V41,I.passk
 T25|x|web playback audio session, role-aware lock-screen controls and background buffering; verify, push and deploy both hosts|V10,V15,V32,V34,V38,V42,V43,V44,V45,I.playback,I.public,I.build
 
 T26|x|repair permanent upstream timeout and delayed native failure reporting; verify, push and deploy|V10,V12,V36,V46,V47,I.helper,I.upstream
+T27|x|resume interrupted Spotify downloads; preserve source cause/stacks; verify, push and deploy|V10,V13,V28,V36,V48,V49,I.helper,I.build
 
 ## §B BUGS
 id|date|cause|fix
@@ -190,3 +193,5 @@ B66|2026-10-11|MoQ subscription update completion adopts a rejecting closed prom
 B67|2026-10-16|Managed publisher inherits ten-second retry budget; terminal connection cause discarded; temporary upstream outage permanently kills output|Unbounded transient retry lifetime with capped jittered pacing; preserve terminal cause; real outage/reconnected-media and auth-rejection regressions (V46)
 B68|2026-10-16|Tokio runtime shutdown waits forever for uncancellable stdin read after fatal transport failure; error appears only when next PCM write unblocks it|Bound blocking-pool shutdown; subprocess regression retains empty open stdin during fatal error (V47)
 B69|2026-10-16|Native auth regression parses URL into ambiguous Into<Addrs> target|Reuse typed connection-config URL; native suite compilation (V10,V46)
+B70|2026-10-16|Spotify missing-range read times out after partial audio; helper exits, stderr discarded, playback stops despite healthy MoQ|Resume pinned file at exact emitted offset with bounded retries and exclusive reader; drain allowlisted source diagnostics; timeout/truncation/cancellation regressions (V48,V49)
+B71|2026-10-16|Bun stack can contain only Error and frames; preferring stack discards meaningful download failure message|Shared error formatter retains message plus original frames in worker and browser; bundled worker regression retains timeout cause (V49)

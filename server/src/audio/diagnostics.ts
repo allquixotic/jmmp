@@ -41,9 +41,10 @@ export class GapWatch {
   }
 }
 
-const events = new Set(["gap", "recovered", "connected", "disconnected", "summary", "packet_loss", "high_rtt", "stale_content", "encode_slow", "encode_failed", "closed", "relay_failed"]);
-const phases = new Set(["pcm_input", "encode", "transport", "egress"]);
-const metrics = ["generation", "gapMs", "durationMs", "frames", "pcmFrames", "subscriptions", "bytesSent", "bytesReceived", "bytesLost", "packetsSent", "packetsLost", "staleFrames", "staleGroups", "staleBytes", "rttMs", "connected", "epoch"];
+const events = new Set(["gap", "retry", "failed", "recovered", "connected", "disconnected", "summary", "packet_loss", "high_rtt", "stale_content", "encode_slow", "encode_failed", "closed", "relay_failed"]);
+const phases = new Set(["source_read", "pcm_input", "encode", "transport", "egress"]);
+const reasons = new Set(["timeout", "truncated", "connection_reset", "connection_aborted", "not_connected", "broken_pipe", "read_failed"]);
+const metrics = ["attempt", "offset", "generation", "gapMs", "durationMs", "frames", "pcmFrames", "subscriptions", "bytesSent", "bytesReceived", "bytesLost", "packetsSent", "packetsLost", "staleFrames", "staleGroups", "staleBytes", "rttMs", "connected", "epoch"];
 /** Bounded NDJSON with an allowlist: arbitrary native text/URLs never enter service logs. */
 export async function readHelperEvents(stream: ReadableStream<Uint8Array>, ready: () => void, emit: (event: PipelineDiagnostic) => void) {
   const decoder = new TextDecoder(); let pending = "", oversized = false;
@@ -65,6 +66,7 @@ export async function readHelperEvents(stream: ReadableStream<Uint8Array>, ready
             ["source_server", "server_helper", "helper_upstream"].includes(String(value.stage))) {
             const event: PipelineDiagnostic = { stage: value.stage as PipelineStage, event: String(value.eventType) };
             if (phases.has(String(value.phase))) event.phase = String(value.phase);
+            if (reasons.has(String(value.reason))) event.reason = String(value.reason);
             for (const key of metrics) {
               const metric = value[key];
               if (typeof metric === "number" && Number.isFinite(metric) && metric >= 0 || typeof metric === "boolean") event[key] = metric;
