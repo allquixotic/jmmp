@@ -80,6 +80,9 @@ V43: Media Session metadata follows the active track; shared lock-screen control
 V44: Hidden/delayed main-thread observations never count as rendered underruns or watchdog failures; finite background playout reserve leaves persisted learning unchanged; foreground starts fresh render evidence and retains automatic recovery for genuine stalls; visibility changes never disconnect healthy audio or resume a deliberately paused receiver.
 V45: MoQ cancellation/recovery observes losing terminal promises even when an earlier race input already settled; subscription failures still reach normal transport diagnostics without uncaught browser rejections.
 
+V46: Managed publisher survives transient upstream outages beyond ten seconds with jittered bounded retry pacing and unchanged broadcast/source pipeline; reconnect restores media delivery; explicit authentication rejection remains terminal and preserves its underlying cause through credential-redacted diagnostics.
+V47: Fatal native failure exits promptly while parent retains an open idle PCM pipe; uncancellable stdin read never delays failure reporting until next playback command.
+
 ## §T TASKS
 id|status|task|cites
 --|--|--|--
@@ -110,6 +113,8 @@ T22|x|listener Resync and pipeline dropout diagnostics; verify, push and deploy|
 T23|x|passkey roles/labels, concurrent observers and stream shortcut; verify|V10,V37,V38,V39,V40
 T24|x|select and persist invitation role; verify|V10,V21,V22,V23,V37,V41,I.passkey-invite
 T25|x|web playback audio session, role-aware lock-screen controls and background buffering; verify, push and deploy both hosts|V10,V15,V32,V34,V38,V42,V43,V44,V45,I.playback,I.public,I.build
+
+T26|x|repair permanent upstream timeout and delayed native failure reporting; verify, push and deploy|V10,V12,V36,V46,V47,I.helper,I.upstream
 
 ## §B BUGS
 id|date|cause|fix
@@ -182,3 +187,6 @@ B63|2026-10-11|Audio-only Media Session adapter requires unrelated camera/microp
 B64|2026-10-11|Background browser fixture expects requested delay to equal effective delay, omitting MoQ synchronization RTT margin|Assert effective delay reaches the reserve and saved learning remains unchanged (V44)
 B65|2026-10-11|Cold-controller browser fixture presses OS play before authoritative pause observation reaches UI|Wait for Media Session paused state before requesting resume (V43)
 B66|2026-10-11|MoQ subscription update completion adopts a rejecting closed promise after short-circuit race already returned|Persist a narrow @moq/net patch observing the losing completion promise; blackhole/reconnect browser test rejects uncaught errors (V45)
+B67|2026-10-16|Managed publisher inherits ten-second retry budget; terminal connection cause discarded; temporary upstream outage permanently kills output|Unbounded transient retry lifetime with capped jittered pacing; preserve terminal cause; real outage/reconnected-media and auth-rejection regressions (V46)
+B68|2026-10-16|Tokio runtime shutdown waits forever for uncancellable stdin read after fatal transport failure; error appears only when next PCM write unblocks it|Bound blocking-pool shutdown; subprocess regression retains empty open stdin during fatal error (V47)
+B69|2026-10-16|Native auth regression parses URL into ambiguous Into<Addrs> target|Reuse typed connection-config URL; native suite compilation (V10,V46)

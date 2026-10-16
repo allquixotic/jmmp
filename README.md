@@ -203,6 +203,13 @@ not a measurement of audio reaching a listener's speakers. Publisher URLs and
 credentials are excluded. Under systemd, inspect these with
 `journalctl -u jmmp.service -f`.
 
+Managed publishing retries temporary upstream outages for as long as jmmp runs,
+with jittered backoff capped at five seconds. The local relay, broadcast name and
+source pipeline remain alive, so publishing can resume when the connection returns.
+Initial connection setup still has a twenty-second deadline. Authentication
+rejections stop publishing and retain the underlying error, with relay credentials
+redacted. Fatal helper errors are reported promptly even while playback is idle.
+
 Track selection and seek rearm the audio pipeline on the existing transport.
 Listeners stay connected while idle, at track boundaries, and during temporary
 source failures, then resume when audio returns. Playback status polling supplies

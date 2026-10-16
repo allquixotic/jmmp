@@ -7,7 +7,9 @@ use bytes::Bytes;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 mod diagnostics;
+mod runtime;
 mod spotify;
+mod upstream;
 
 #[derive(Deserialize)]
 struct Config {
@@ -29,9 +31,12 @@ fn initialize_crypto() {
     let _ = moq_tokio::crypto::install_default();
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     initialize_crypto();
+    runtime::run(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--spotify") {
         return spotify::run().await;
     }
@@ -83,19 +88,7 @@ async fn main() -> anyhow::Result<()> {
     // connection and clients never need an address for this server.
     let stats = moq_net::stats::Registry::new(Default::default());
     let upstream = if let Some(upstream) = config.upstream {
-        let mut connect = moq_tokio::connect::Config::default();
-        connect.url = Some(
-            upstream
-                .url
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid upstream URL"))?,
-        );
-        connect.version = vec![
-            upstream
-                .protocol
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid upstream protocol"))?,
-        ];
+        let connect = upstream::config(&upstream.url, &upstream.protocol)?;
         let client = connect.init(Default::default())?.with_stats(
             stats
                 .tier(moq_net::stats::Tier::new("upstream"))
@@ -108,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::timeout(std::time::Duration::from_secs(20), connection.established())
                 .await
                 .map_err(|_| anyhow::anyhow!("Upstream MoQ connection timed out"))?
-                .map_err(|_| anyhow::anyhow!("Upstream MoQ connection failed"))?,
+                .context("Upstream MoQ connection failed")?,
         )
     } else {
         None
@@ -250,14 +243,14 @@ async fn main() -> anyhow::Result<()> {
             diagnostics::emit(serde_json::json!({"stage":"server_helper", "eventType":"relay_failed", "phase":"transport"}));
             return result.context("relay task")?;
         },
-        _ = async {
+        result = async {
             match &upstream {
-                Some(connection) => { let _ = connection.closed().await; }
-                None => std::future::pending::<()>().await,
+                Some(connection) => connection.closed().await,
+                None => std::future::pending::<moq_tokio::Result<()>>().await,
             }
         } => {
             diagnostics::emit(serde_json::json!({"stage":"helper_upstream", "eventType":"closed", "phase":"transport"}));
-            Err(anyhow::anyhow!("Upstream MoQ connection stopped"))
+            Err(upstream::stopped(result))
         },
     };
     drop(audio);
