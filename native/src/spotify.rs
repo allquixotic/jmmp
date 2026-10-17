@@ -156,6 +156,10 @@ impl DownloadReader {
             controller,
         };
         reader.audio.seek(SeekFrom::Start(HEADER + offset))?;
+        // AudioFile opens in random-access mode. Once positioned, use streaming
+        // read-ahead/adaptive ranges rather than exhausting the HTTP limiter on
+        // 64 KiB requests. Apply on initial open and every resumed reader.
+        reader.controller.set_stream_mode();
         Ok(reader)
     }
 }

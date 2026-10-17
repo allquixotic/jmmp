@@ -118,6 +118,7 @@ T25|x|web playback audio session, role-aware lock-screen controls and background
 
 T26|x|repair permanent upstream timeout and delayed native failure reporting; verify, push and deploy|V10,V12,V36,V46,V47,I.helper,I.upstream
 T27|x|resume interrupted Spotify downloads; preserve source cause/stacks; verify, push and deploy|V10,V13,V28,V36,V48,V49,I.helper,I.build
+T28|x|enable Spotify streaming fetch mode after positioning initial/resumed readers; verify local rate-limit cause and deploy|V10,V13,V48,I.helper
 
 ## §B BUGS
 id|date|cause|fix
@@ -195,3 +196,4 @@ B68|2026-10-16|Tokio runtime shutdown waits forever for uncancellable stdin read
 B69|2026-10-16|Native auth regression parses URL into ambiguous Into<Addrs> target|Reuse typed connection-config URL; native suite compilation (V10,V46)
 B70|2026-10-16|Spotify missing-range read times out after partial audio; helper exits, stderr discarded, playback stops despite healthy MoQ|Resume pinned file at exact emitted offset with bounded retries and exclusive reader; drain allowlisted source diagnostics; timeout/truncation/cancellation regressions (V48,V49)
 B71|2026-10-16|Bun stack can contain only Error and frames; preferring stack discards meaningful download failure message|Shared error formatter retains message plus original frames in worker and browser; bundled worker regression retains timeout cause (V49)
+B72|2026-10-16|Spotify reader omits set_stream_mode; 64KiB range requests exhaust local librespot HTTP limiter, silently end fetch task, then timeout|Enable streaming after seek on each initial/resumed reader; isolated same-file comparison: 432 requests/one local limit/16.8s versus five requests/no limit/3.75s, identical SHA256 (V13,V48)
