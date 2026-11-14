@@ -67,7 +67,7 @@ if (slow) {
           if (message.type === "pcm") {
             frames += message.pcm.length / 2;
             for (const value of message.pcm as Float32Array) peak = Math.max(peak, Math.abs(value));
-            worker!.postMessage({type:"ack"});
+            worker!.postMessage({type:"ack",generation:1});
           }
         };
         worker.postMessage({type:"start",dataDir,trackId:1,generation:1,position:0,paused:false,params:{...DEFAULT_DSP_PARAMS,volume:.5}});
@@ -102,8 +102,8 @@ if (slow) {
         }
         if (message.type === "pcm") {
           // Real worker acknowledgement backpressure must be reported while pending.
-          if (first) { first = false; setTimeout(() => worker?.postMessage({ type: "ack" }), 250); }
-          else worker!.postMessage({ type: "ack" });
+          if (first) { first = false; setTimeout(() => worker?.postMessage({ type: "ack", generation: 3 }), 250); }
+          else worker!.postMessage({ type: "ack", generation: 3 });
         }
       };
       worker!.postMessage({type:"start",dataDir,trackId:3,generation:3,position:0,paused:false,params:DEFAULT_DSP_PARAMS});
@@ -118,7 +118,7 @@ if (slow) {
         if (event.data.type === "error" && event.data.generation === 4) {
           clearTimeout(timeout); expect(event.data.errorCode).toBeUndefined(); resolve(event.data.error);
         }
-        if (event.data.type === "pcm") worker!.postMessage({type:"ack"});
+        if (event.data.type === "pcm") worker!.postMessage({type:"ack",generation:4});
       };
       worker!.postMessage({type:"start",dataDir,trackId:4,generation:4,position:0,paused:false,params:DEFAULT_DSP_PARAMS});
     });
@@ -130,3 +130,69 @@ if (slow) {
     await rm(dataDir, {recursive:true,force:true});
   }
 }, 20000);
+
+async function childProcesses() {
+  const rows = (await Bun.$`ps -A -o pid=,ppid=,stat=,command=`.quiet().text()).split("\n");
+  return rows.map(row => row.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/))
+    .filter((match): match is RegExpMatchArray => !!match && Number(match[2]) === process.pid)
+    .map(match => ({ pid: Number(match[1]), zombie: match[3]!.startsWith("Z"), command: match[4]! }));
+}
+
+test("V50 audio worker switches generations without termination and reaps every Spotify helper before drained", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "jmmp-worker-reap-"));
+  const native = join(dataDir, "native", "fixture");
+  await mkdir(native, { recursive: true });
+  const workerPath = join(native, "audio-worker.js"), helperPath = join(native, "jmmp-moq");
+  const db = initDb(dataDir);
+  let worker: Worker | undefined;
+  try {
+    const fixture = Buffer.from(await Bun.file(join(import.meta.dir, "fixtures/continuity-one.flac")).arrayBuffer()).toString("base64");
+    // An endless stream that ignores SIGTERM: only an escalated, awaited kill can reap it.
+    await Bun.write(helperPath, `#!${process.execPath}\nprocess.on('SIGTERM', () => {});
+const reader = Bun.stdin.stream().getReader(); await reader.read(); await reader.cancel();
+const bytes = Buffer.from(${JSON.stringify(fixture)}, 'base64');
+const writer = Bun.stdout.writer();
+writer.write(JSON.stringify({status:200,size:bytes.length+1,start:0,end:bytes.length})+'\\n'); writer.write(bytes); await writer.flush();
+setInterval(() => {}, 1000);\n`);
+    await chmod(helperPath, 0o700);
+    await build({ entryPoints: [join(import.meta.dir, "../audio/worker.ts")], outfile: workerPath,
+      bundle: true, platform: "node", target: "es2023", format: "esm", external: ["bun:sqlite"],
+      minify: false, keepNames: true, treeShaking: false });
+    const key = await loadOrInitMachineKey(dataDir);
+    const credentials = await encryptJson(key, { kind: "spotify", accessToken: "fixture-token", refreshToken: "", expiresAt: Date.now() + 3600000 });
+    db.run("INSERT INTO sources (kind,name,config_json,creds_encrypted,cache_policy) VALUES ('spotify','Fixture',?,?,'none')", [JSON.stringify({kind:"spotify",clientId:"a".repeat(32),uris:[]}), credentials]);
+    db.run("INSERT INTO tracks(source_id,source_track_id,title,codec,duration_ms) VALUES (1,'spotify:track:5sWHDYs0csV6RS48xBl0tH','Endless','flac',600000)");
+    const earlierZombies = new Set((await childProcesses()).filter(child => child.zombie).map(child => child.pid));
+    const helpers = async () => (await childProcesses()).filter(child => child.command.includes(helperPath));
+    const leaked = async () => (await childProcesses()).filter(child => child.zombie && !earlierZombies.has(child.pid));
+    worker = new Worker(workerPath);
+    const next = (type: string, generation?: number) => new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Worker did not send ${type} for generation ${generation}`)), 8000);
+      worker!.onerror = event => { clearTimeout(timeout); reject(new Error(event.message)); };
+      worker!.onmessage = event => {
+        const message = event.data;
+        if (message.type === "error") { clearTimeout(timeout); reject(new Error(message.error)); }
+        if (message.type === type && (generation === undefined || message.generation === generation)) { clearTimeout(timeout); resolve(); }
+      };
+    });
+    // Seek/skip/play reuse one worker; each start replaces the previous helper.
+    for (const generation of [1, 2, 3]) {
+      const pcm = next("pcm", generation);
+      worker.postMessage({type:"start",dataDir,trackId:1,generation,position:0,paused:false,params:DEFAULT_DSP_PARAMS});
+      await pcm;
+    }
+    expect((await helpers()).length).toBeGreaterThan(0);
+    const drained = next("drained");
+    worker.postMessage({ type: "stop", generation: 4 });
+    worker.postMessage({ type: "drain", generation: 4 });
+    await drained;
+    expect(await helpers()).toEqual([]);
+    expect(await leaked()).toEqual([]);
+    worker.terminate(); worker = undefined;
+    await Bun.sleep(200);
+    expect(await leaked()).toEqual([]);
+  } finally {
+    worker?.terminate(); db.close();
+    await rm(dataDir, {recursive:true,force:true});
+  }
+}, 30000);

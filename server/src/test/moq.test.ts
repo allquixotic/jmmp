@@ -255,7 +255,7 @@ test("V3/V4: audio worker paces PCM, applies volume and allows only one unacknow
       if (m.type === "pcm") {
         frames++; expect(m.pcm.length).toBe(1920);
         for (const sample of m.pcm) { if (!Number.isFinite(sample)) fail(new Error("Non-finite PCM")); maximum = Math.max(maximum, Math.abs(sample)); }
-        first(); if (release) worker.postMessage({ type: "ack" });
+        first(); if (release) worker.postMessage({ type: "ack", generation: 1 });
       } else if (m.type === "ended") finish();
       else if (m.type === "error") fail(new Error(m.error));
     };
@@ -263,7 +263,7 @@ test("V3/V4: audio worker paces PCM, applies volume and allows only one unacknow
       params: { pitchSemi: 0, tempoPct: 0, speedPct: 0, gainDb: 0, volume: .5 } });
     await timeout(firstFrame); await Bun.sleep(100);
     expect(frames).toBe(1);
-    release = true; worker.postMessage({ type: "ack" }); await timeout(finished);
+    release = true; worker.postMessage({ type: "ack", generation: 1 }); await timeout(finished);
     expect(frames).toBe(50); expect(performance.now() - start).toBeGreaterThan(900);
     expect(maximum).toBeGreaterThan(.04); expect(maximum).toBeLessThan(.05);
   } finally { worker.terminate(); await app.close(); }

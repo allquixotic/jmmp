@@ -11,6 +11,19 @@ import type { ServerSourceAdapter } from "./types.ts";
 type Config = Extract<SourceConfig, { kind: "spotify" }>;
 type Secrets = Extract<SourceSecrets, { kind: "spotify" }>;
 const refreshes = new WeakMap<Database, Map<number, Promise<string>>>();
+const HELPER_KILL_GRACE_MS = 2500;
+// Bun reaps a child only on the event loop that spawned it. Track this thread's
+// helpers so an audio worker can wait for every exit before it is terminated (V50).
+const liveHelpers = new Set<Bun.Subprocess>();
+function stopHelper(child: Bun.Subprocess): Promise<void> {
+  child.kill();
+  const escalate = setTimeout(() => child.kill("SIGKILL"), HELPER_KILL_GRACE_MS);
+  return child.exited.then(() => {}, () => {}).finally(() => clearTimeout(escalate));
+}
+/** Kill and await every Spotify helper spawned on this thread. */
+export async function settleSpotifyHelpers(): Promise<void> {
+  await Promise.all([...liveHelpers].map(stopHelper));
+}
 const SPOTIFY_ERRORS: Record<string, string> = {
   search: "Spotify search failed; try again or reconnect this source in Sources",
   login: "Spotify login failed; reconnect this source in Sources",
@@ -88,6 +101,7 @@ export class SpotifyPipe {
   private heartbeat: ReturnType<typeof setInterval>;
   private diagnostics: Promise<void>;
   private failure: PipelineDiagnostic | undefined;
+  private closing: Promise<void> | undefined;
   constructor(private process: Bun.Subprocess<"pipe", "pipe", "pipe" | "ignore">,
     report: (event: PipelineDiagnostic) => void = () => {}) {
     this.reader = process.stdout.getReader();
@@ -128,7 +142,15 @@ export class SpotifyPipe {
       const joined = new Uint8Array(this.buffered.length + next.value.length); joined.set(this.buffered); joined.set(next.value, this.buffered.length); this.buffered = joined;
     }
   }
-  close() { clearInterval(this.heartbeat); this.process.stdin.end(); this.process.kill(); void this.reader.cancel().catch(() => {}); }
+  /** Resolves once the helper has exited and been reaped (V50). */
+  close(): Promise<void> {
+    if (!this.closing) {
+      clearInterval(this.heartbeat); this.process.stdin.end();
+      this.closing = stopHelper(this.process);
+      void this.reader.cancel().catch(() => {});
+    }
+    return this.closing;
+  }
   audio(): ReadableStream<Uint8Array> {
     return new ReadableStream({
       pull: async controller => {
@@ -147,6 +169,8 @@ export function makeSpotifyAdapter(db: Database, key: CryptoKey, sourceId: numbe
     const accessToken = await spotifyAccessToken(db, key, sourceId, config);
     const { helper } = await audioAssets(dataDir);
     const child = Bun.spawn([helper, "--spotify"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const forget = () => { liveHelpers.delete(child); };
+    liveHelpers.add(child); void child.exited.then(forget, forget);
     child.stdin.write(JSON.stringify({ operation, clientId: config.clientId, accessToken, ...extras }) + "\n");
     return new SpotifyPipe(child, event => logPipeline({ ...event, sourceId }));
   }

@@ -160,7 +160,7 @@ export class PlaybackController {
     log.error("Audio pipeline failure", { stage, generation: this.status.generation, trackId: this.status.trackId, errorCode, error: redactMoqDiagnostics(error) });
     this.status.errorCode = errorCode;
     this.error = error; this.status.error = error; this.status.state = "error"; this.status.revision++; this.status.generation++;
-    this.worker?.terminate(); this.worker = undefined;
+    this.worker?.postMessage({ type: "stop", generation: this.status.generation });
     void this.helper?.write(1, this.status.generation).catch(() => {});
   }
   command(command: PlaybackCommand, session: ActiveSession, revision?: number) {
@@ -196,35 +196,62 @@ export class PlaybackController {
   private async restart(position: number, paused = this.status.state === "paused") {
     if (!Number.isFinite(position) || position < 0 || (this.status.duration && position > this.status.duration)) throw new Error("Invalid seek position");
     if (!this.status.trackId) throw new Error("No track selected");
-    this.worker?.terminate(); this.worker = undefined; this.status.generation++;
+    this.status.generation++;
     const generation = this.status.generation;
+    this.worker?.postMessage({ type: "stop", generation });
     await this.helper!.write(1, generation);
     this.status.position = position; this.status.state = paused ? "paused" : "buffering"; this.status.error = null; delete this.status.errorCode;
+    this.audioWorker().postMessage({ type: "start", dataDir: this.ctx.cfg.dataDir, generation, trackId: this.status.trackId, position, paused, params: this.status.params });
+  }
+  /** One worker serves every generation; start/stop messages replace termination (V50). */
+  private audioWorker(): Worker {
+    if (this.worker) return this.worker;
     const worker = this.worker = new Worker(this.helper!.workerPath);
-    worker.onerror = event => { if (generation === this.status.generation) this.fail(event.message); };
+    worker.onerror = event => {
+      if (this.worker !== worker) return;
+      // Its state is unknown after an uncaught error: replace it, but drain its helpers first.
+      this.worker = undefined; this.fail(event.message); void retireWorker(worker, this.status.generation);
+    };
     worker.onmessage = event => {
-      const m = event.data;
-      if (m.generation !== this.status.generation) return;
+      const m = event.data, generation: number = m.generation;
+      if (this.worker !== worker || generation !== this.status.generation) return;
       if (m.type === "pcm") {
-        if (this.status.state === "paused") { worker.postMessage({ type: "ack" }); return; }
-        void this.helper!.write(0, generation, m.pcm).then(() => worker.postMessage({ type: "ack" })).catch(error => { if (generation === this.status.generation) this.fail(String(error), undefined, "server_helper"); });
+        if (this.status.state === "paused") { worker.postMessage({ type: "ack", generation }); return; }
+        void this.helper!.write(0, generation, m.pcm).then(() => worker.postMessage({ type: "ack", generation })).catch(error => { if (generation === this.status.generation) this.fail(String(error), undefined, "server_helper"); });
         if (this.status.state === "buffering") this.status.state = "playing";
       } else if (m.type === "diagnostic") logPipeline(m.diagnostic);
       else if (m.type === "position") { this.status.position = m.position; if (m.duration) this.status.duration = m.duration; }
       else if (m.type === "ended") { this.status.position = m.position; this.status.state = "ended"; this.status.revision++; void this.helper?.write(1, generation).catch(error => { if (generation === this.status.generation) this.fail(String(error)); }); }
       else if (m.type === "error") this.fail(m.error, m.errorCode === "spotify_unavailable" ? m.errorCode : undefined);
     };
-    worker.postMessage({ type: "start", dataDir: this.ctx.cfg.dataDir, generation, trackId: this.status.trackId, position, paused, params: this.status.params });
+    return worker;
   }
   private async stopPlayback() {
-    this.worker?.terminate(); this.worker = undefined; this.status.generation++;
+    this.status.generation++;
+    this.worker?.postMessage({ type: "stop", generation: this.status.generation });
     if (this.running) await this.helper!.write(1, this.status.generation);
     this.status.state = "idle"; this.status.trackId = null; this.status.position = 0; this.status.error = null; delete this.status.errorCode;
   }
   async shutdown() {
-    clearTimeout(this.testTimer); await this.stopPlayback(); await this.helper?.close(); this.helper = undefined;
+    clearTimeout(this.testTimer); await this.stopPlayback();
+    const worker = this.worker; this.worker = undefined;
+    if (worker) await retireWorker(worker, this.status.generation);
+    await this.helper?.close(); this.helper = undefined;
     this.authServer?.stop(true); this.authServer = undefined;
   }
+}
+const WORKER_DRAIN_MS = 10000;
+/** Bun reaps a child only on the event loop that spawned it: terminate an audio
+ * worker only after it reports that every helper it started has exited (V50). */
+async function retireWorker(worker: Worker, generation: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const drained = new Promise<boolean>(resolve => {
+    timer = setTimeout(() => resolve(false), WORKER_DRAIN_MS);
+    worker.addEventListener("message", event => { if (event.data?.type === "drained") resolve(true); });
+  });
+  worker.postMessage({ type: "drain", generation });
+  if (!await drained) log.warn("Audio worker did not drain before termination", { limitMs: WORKER_DRAIN_MS });
+  clearTimeout(timer); worker.terminate();
 }
 const controllers = new WeakMap<AppCtx, PlaybackController>();
 export function playbackController(ctx: AppCtx) {

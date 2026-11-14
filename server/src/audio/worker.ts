@@ -6,7 +6,7 @@ import { AudioDsp } from "@jmmp/shared/audio/dsp";
 import { createDecoder, type DecodedChunk } from "@jmmp/shared/audio/decoders";
 import type { Codec, DspParams } from "@jmmp/shared";
 import { errorText } from "@jmmp/shared/error-format";
-import { SpotifySourceError } from "../sources/spotify.ts";
+import { SpotifySourceError, settleSpotifyHelpers } from "../sources/spotify.ts";
 import { loadAdapter } from "../sources/index.ts";
 import { loadOrInitMachineKey } from "../crypto.ts";
 import { GapWatch, type PipelineDiagnostic } from "./diagnostics.ts";
@@ -18,24 +18,36 @@ let ack: (() => void) | undefined;
 let dsp: AudioDsp | undefined;
 let outputWatch: GapWatch | undefined;
 let startupWatch: GapWatch | undefined;
+const plays = new Set<Promise<unknown>>();
 function applyParams() {
   dsp?.handle({ type: "params", pitch: params.pitchSemi, tempo: params.tempoPct,
     rate: params.speedPct, gainDb: params.gainDb });
 }
 self.onmessage = e => {
   const m = e.data;
-  if (m.type === "ack") { ack?.(); ack = undefined; return; }
-  if (m.type === "stop" || m.type === "start") {
+  // A reused worker can receive a late ack for a frame from a superseded generation.
+  if (m.type === "ack") { if (m.generation === generation) { ack?.(); ack = undefined; } return; }
+  if (m.type === "stop" || m.type === "start" || m.type === "drain") {
     generation = m.generation; cancelled?.(); ack?.(); ack = undefined;
+    if (m.type === "drain") { void drain(); return; }
     if (m.type === "stop") return;
     paused = !!m.paused; params = m.params;
-    void play(m).catch(error => { if (m.generation === generation) self.postMessage({ type: "error", generation, errorCode: error instanceof SpotifySourceError && error.code === "unavailable" ? "spotify_unavailable" : undefined, error: errorText(error) }); });
+    const run = play(m).catch(error => { if (m.generation === generation) self.postMessage({ type: "error", generation, errorCode: error instanceof SpotifySourceError && error.code === "unavailable" ? "spotify_unavailable" : undefined, error: errorText(error) }); });
+    plays.add(run); void run.finally(() => plays.delete(run));
   } else if (m.type === "params") { params = m.params; applyParams(); }
   else if (m.type === "pause") {
     paused = m.paused; outputWatch?.reset(); startupWatch?.reset();
     if (!paused) startupWatch?.progress(performance.now());
   }
 };
+
+// Bun reaps a child only on the event loop that spawned it, so terminating this
+// worker before its Spotify helpers exit leaves each one a zombie (V50).
+async function drain() {
+  while (plays.size) await Promise.allSettled([...plays]);
+  await settleSpotifyHelpers();
+  self.postMessage({ type: "drained" });
+}
 
 async function play(m: { generation: number; dataDir: string; trackId: number; position: number }) {
   const mine = m.generation;
@@ -70,6 +82,7 @@ async function play(m: { generation: number; dataDir: string; trackId: number; p
     reader = upstream.body.getReader();
     if (mine !== generation) return;
     const decoder = decoderHolder.decoder = await createDecoder(track.codec);
+    if (mine !== generation) return;
     const engine = new AudioDsp(RATE); dsp = engine; applyParams();
     let sourceRate = 0, eof = false, skip = m.position, position = m.position;
     const chunks: DecodedChunk[] = [];
